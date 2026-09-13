@@ -1,0 +1,1029 @@
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hourglass</title>
+<meta name="description" content="A daily time tool that makes time visible and starting cheap.">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#e9ece7">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Hourglass">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#14211f; --paper:#e9ece7; --surface:#fbfcfa; --muted:#6d7a74;
+    --line:#ccd3cc; --avail:#0f8b7e; --avail-soft:#cfe6e2;
+    --over:#c22f45; --over-soft:#f2d7db; --spent:#b9c2b8; --r:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:"Archivo",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+    font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased;padding-bottom:84px;
+  }
+  button{font:inherit;color:inherit;cursor:pointer}
+  :focus-visible{outline:2.5px solid var(--avail);outline-offset:2px;border-radius:4px}
+  input[type=text],input[type=time],input[type=number],input[type=date]{
+    font:inherit;padding:13px 12px;border:1px solid var(--line);border-radius:var(--r);
+    background:var(--surface);color:var(--ink);width:100%;min-width:0;
+  }
+
+  /* gauge */
+  .gauge{position:sticky;top:0;z-index:20;background:var(--paper);border-bottom:1px solid var(--line);padding:12px 16px 10px}
+  .gauge-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .gauge-left{font-weight:600;letter-spacing:-0.01em}
+  .gauge-left b{font-size:19px;font-weight:700}
+  .gauge-right{font-size:13px;color:var(--muted);text-align:right}
+  .gauge-right.over{color:var(--over);font-weight:600}
+  .bar{position:relative;height:12px;margin-top:9px;background:var(--surface);border:1px solid var(--line);border-radius:99px;overflow:hidden}
+  .bar-fill{position:absolute;inset:0 auto 0 0;background:var(--avail);border-radius:99px;transition:width .4s ease}
+  .bar-fill.over{background:var(--over)}
+
+  main{max-width:640px;margin:0 auto;padding:20px 16px 8px}
+  .view{display:none}
+  .view.on{display:block}
+  h2{font-size:13px;font-weight:600;color:var(--muted);margin:26px 0 10px}
+  h2:first-child{margin-top:0}
+  .hint{color:var(--muted);font-size:14px;margin:8px 0 0}
+
+  /* now */
+  .task-title{font-size:27px;font-weight:700;line-height:1.15;letter-spacing:-0.025em;margin:0 0 4px;word-break:break-word}
+  .task-sub{color:var(--muted);font-size:14px;margin:0}
+  .task-sub.due{color:var(--over);font-weight:600}
+
+  .firstact{
+    margin:14px 0 0;padding:15px 16px;border-radius:var(--r);
+    background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--avail);
+  }
+  .firstact span{display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px}
+  .firstact p{margin:0;font-size:17px;font-weight:600;line-height:1.3;word-break:break-word}
+  .firstact button{background:none;border:none;color:var(--avail);font-weight:600;font-size:13px;padding:6px 0 0}
+
+  .ring-wrap{display:flex;justify-content:center;margin:16px 0 6px}
+  svg.ring{width:min(62vw,236px);height:auto;display:block}
+  .ring-track{fill:none;stroke:var(--surface);stroke-width:13}
+  .ring-edge{fill:none;stroke:var(--line);stroke-width:1}
+  .ring-arc{fill:none;stroke:var(--avail);stroke-width:13;transform:rotate(-90deg);transform-origin:120px 120px;transition:stroke .3s}
+  .ring-arc.over{stroke:var(--over)}
+  .ring-big{font-size:46px;font-weight:700;letter-spacing:-0.04em;fill:var(--ink)}
+  .ring-small{font-size:14px;font-weight:500;fill:var(--muted)}
+  .ring-small.over{fill:var(--over);font-weight:600}
+
+  .start{display:block;width:100%;padding:20px 18px;margin-top:14px;background:var(--ink);color:var(--surface);
+    border:none;border-radius:var(--r);font-size:19px;font-weight:600;letter-spacing:-0.015em;text-align:center}
+  .start.stop{background:var(--surface);color:var(--ink);border:1.5px solid var(--ink)}
+  .start-note{text-align:center;color:var(--muted);font-size:13px;margin:9px 0 0}
+  .linkbtn{background:none;border:none;color:var(--avail);font-weight:600;padding:0;font-size:13px}
+
+  .acts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+  .acts button{padding:13px 6px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);font-size:14px;font-weight:500}
+  .acts button.primary{border-color:var(--avail);color:var(--avail);font-weight:600}
+  .acts.two{grid-template-columns:1fr 1fr}
+
+  .panel{margin-top:14px;padding:16px;border-radius:var(--r);background:var(--avail-soft);border:1px solid var(--avail)}
+  .panel p{margin:0 0 12px;font-size:15px;font-weight:500}
+  .panel .acts{margin-top:0}
+  .panel .acts button{background:var(--surface)}
+  .panel.red{background:var(--over-soft);border-color:var(--over)}
+  .panel.red .acts button.primary{border-color:var(--over);color:var(--over)}
+  .panel .row{display:flex;gap:8px;margin-top:10px}
+  .panel .row button{padding:0 18px;border:1px solid var(--ink);background:var(--ink);color:var(--surface);border-radius:var(--r);font-weight:600;white-space:nowrap}
+
+  .quiet{margin-top:10px;text-align:center;font-size:13px;color:var(--muted)}
+
+  .empty{text-align:center;padding:44px 20px;border:1.5px dashed var(--line);border-radius:var(--r);background:var(--surface)}
+  .empty p{margin:0 0 14px;color:var(--muted)}
+
+  .capture{margin-top:28px;padding-top:18px;border-top:1px solid var(--line)}
+  .capture label{display:block;font-size:13px;color:var(--muted);margin-bottom:7px}
+  .cap-row{display:flex;gap:8px}
+  .cap-row button{flex:none;padding:0 18px;border:1px solid var(--ink);background:var(--ink);color:var(--surface);border-radius:var(--r);font-weight:600;white-space:nowrap}
+
+  .upnext-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0}
+  .upnext-row span{font-weight:500;flex:1}
+  .upnext-row em{font-style:normal;color:var(--muted);font-size:13px}
+  .upnext-row button{background:none;border:none;color:var(--avail);font-weight:600;font-size:14px;padding:4px}
+
+  /* plan */
+  .chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+  .chip{padding:8px 14px;border:1px solid var(--line);background:var(--surface);border-radius:99px;font-size:14px;font-weight:500}
+  .chip[aria-pressed=true]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+
+  .task{padding:12px 0;border-bottom:1px solid var(--line)}
+  .task:first-of-type{border-top:1px solid var(--line)}
+  .task-row{display:flex;align-items:center;gap:10px}
+  .task-name{flex:1;min-width:0;font-weight:500;word-break:break-word;text-align:left;background:none;border:none;padding:0}
+  .task.done .task-name{color:var(--muted);text-decoration:line-through}
+  .must{flex:none;width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:var(--surface);font-size:13px;line-height:1;display:grid;place-items:center;color:var(--muted)}
+  .must[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:var(--surface)}
+  .est{display:flex;align-items:center;gap:2px;flex:none}
+  .est button{width:30px;height:30px;border:1px solid var(--line);background:var(--surface);border-radius:7px;font-size:16px;line-height:1;display:grid;place-items:center}
+  .est span{min-width:44px;text-align:center;font-variant-numeric:tabular-nums;font-size:14px;font-weight:600}
+  .move{display:flex;flex-direction:column;gap:2px;flex:none}
+  .move button{width:26px;height:19px;border:1px solid var(--line);background:var(--surface);border-radius:5px;font-size:10px;line-height:1;display:grid;place-items:center;color:var(--muted)}
+  .kill{border:none;background:none;color:var(--muted);font-size:19px;padding:4px 2px;line-height:1;flex:none}
+  .meta{margin:6px 0 0 36px;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 12px}
+  .meta b{font-weight:600;color:var(--ink)}
+  .meta .warn{color:var(--over);font-weight:600}
+  .detail{margin:10px 0 2px 36px;padding:14px;border-radius:var(--r);background:var(--surface);border:1px solid var(--avail)}
+  .detail label{display:block;font-size:12.5px;color:var(--muted);margin:0 0 6px}
+  .detail label+input{margin-bottom:12px}
+  .detail .close{margin-top:4px;padding:10px 16px;border:1px solid var(--ink);background:var(--ink);color:var(--surface);border-radius:var(--r);font-weight:600;font-size:14px}
+
+  .capacity{margin-top:16px;padding:15px;border-radius:var(--r);background:var(--surface);border:1px solid var(--line)}
+  .capacity.over{background:var(--over-soft);border-color:var(--over)}
+  .capacity p{margin:0;font-size:14px}
+  .capacity p+p{margin-top:7px;color:var(--muted);font-size:13px}
+  .capacity.over p+p{color:var(--over)}
+  .capacity ul{margin:8px 0 0;padding-left:20px;font-size:13px;color:var(--over)}
+
+  .note{display:flex;gap:10px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line)}
+  .note p{margin:0;flex:1;font-size:15px;word-break:break-word}
+  .note button{background:none;border:none;color:var(--avail);font-weight:600;font-size:13px;padding:2px 4px;white-space:nowrap}
+  .note button.kill{color:var(--muted);font-weight:400;font-size:19px}
+
+  .set-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}
+  .set-row label{font-size:15px;flex:1}
+  .set-row small{display:block;color:var(--muted);font-size:12.5px;line-height:1.35;margin-top:2px}
+  .set-row input{width:104px;flex:none}
+  .sbtn{flex:none;padding:10px 16px;border:1px solid var(--ink);background:var(--surface);color:var(--ink);border-radius:var(--r);font-weight:600;font-size:14px}
+  .toggle{width:52px;height:30px;border-radius:99px;border:1px solid var(--line);background:var(--surface);position:relative;flex:none}
+  .toggle::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:var(--spent);transition:.2s}
+  .toggle[aria-pressed=true]{background:var(--avail-soft);border-color:var(--avail)}
+  .toggle[aria-pressed=true]::after{left:25px;background:var(--avail)}
+
+  /* review */
+  .rev{padding:13px 0;border-bottom:1px solid var(--line)}
+  .rev-top{display:flex;justify-content:space-between;gap:12px;font-size:15px}
+  .rev-top b{font-weight:500;flex:1;word-break:break-word}
+  .rev-top span{font-variant-numeric:tabular-nums;color:var(--muted);font-size:14px;white-space:nowrap}
+  .rev-bar{display:flex;height:7px;margin-top:8px;gap:2px}
+  .rev-est{background:var(--spent);border-radius:99px 0 0 99px}
+  .rev-act{background:var(--avail);border-radius:0 99px 99px 0}
+  .rev-act.over{background:var(--over)}
+
+  /* tabs */
+  .tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;display:grid;grid-template-columns:repeat(3,1fr);
+    background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+  .tabs button{padding:15px 4px 16px;background:none;border:none;font-size:14px;font-weight:500;color:var(--muted);border-top:2.5px solid transparent;margin-top:-1px}
+  .tabs button[aria-selected=true]{color:var(--ink);font-weight:600;border-top-color:var(--ink)}
+
+  .toast{position:fixed;left:50%;bottom:96px;transform:translate(-50%,14px);z-index:40;max-width:calc(100% - 32px);
+    background:var(--ink);color:var(--surface);padding:12px 18px;border-radius:99px;font-size:14.5px;font-weight:500;opacity:0;pointer-events:none;transition:.25s}
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header class="gauge">
+  <div class="gauge-row">
+    <div class="gauge-left"><b id="g-left">&mdash;</b> left today</div>
+    <div class="gauge-right" id="g-right"></div>
+  </div>
+  <div class="bar"><div class="bar-fill" id="g-fill" style="width:0%"></div></div>
+</header>
+
+<main>
+  <section class="view on" id="view-now">
+    <div id="now-body"></div>
+    <div class="capture">
+      <label for="cap">A thought just barged in? Put it here and keep going.</label>
+      <div class="cap-row">
+        <input type="text" id="cap" placeholder="e.g. book the dentist" autocomplete="off">
+        <button id="cap-go">Park</button>
+      </div>
+    </div>
+    <div id="upnext"></div>
+  </section>
+
+  <section class="view" id="view-plan">
+    <h2>Add something to today</h2>
+    <div class="cap-row">
+      <input type="text" id="t-name" placeholder="What is the thing?" autocomplete="off">
+      <button id="t-add">Add</button>
+    </div>
+    <div class="chips" id="t-chips"></div>
+
+    <h2>Today's list</h2>
+    <div id="tasklist"></div>
+    <div class="capacity" id="capacity"></div>
+
+    <h2>Parked thoughts</h2>
+    <div id="notelist"></div>
+
+    <h2>Settings</h2>
+    <div id="settings"></div>
+  </section>
+
+  <section class="view" id="view-review">
+    <div id="patterns"></div>
+    <h2>What today actually cost</h2>
+    <div id="revlist"></div>
+    <div id="calib"></div>
+    <p class="hint">No streaks here, on purpose. A broken streak is a reason to stop using an app, and stopping is the failure mode this thing exists to prevent.</p>
+  </section>
+</main>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" aria-selected="true" data-v="now">Now</button>
+  <button role="tab" aria-selected="false" data-v="plan">Plan</button>
+  <button role="tab" aria-selected="false" data-v="review">Review</button>
+</nav>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+"use strict";
+
+var KEY = "hourglass:state:v2";
+var C = 2 * Math.PI * 100;
+var EST_OPTS = [5, 15, 25, 45, 90];
+var pickedEst = 25;
+var openDetail = null;   // task id whose editor is expanded
+var askStuck = false;    // "what is the first step" prompt showing on Now
+var S = null, saveTimer = null, toastT = null, actx = null;
+
+/* ---------- state ---------- */
+
+function pad(n){ return n < 10 ? "0" + n : "" + n; }
+function uid(){ return Math.random().toString(36).slice(2,9); }
+function todayKey(){ var d = new Date(); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+
+function blank(){
+  return {
+    day: todayKey(), tasks: [], notes: [], activeId: null,
+    runningSince: null, microUntil: null, microDone: false,
+    nudgeIdx: 0, overrunSeen: false, transitionUntil: null, quietUntil: null,
+    log: [],
+    settings: { dayEnd:"17:30", multiplier:1.5, buffer:5, nudge:10, sound:true }
+  };
+}
+
+function newTask(title, est){
+  return { id:uid(), title:title, est:est, spent:0, status:"todo",
+           first:"", must:false, due:"", starts:0, defers:0 };
+}
+
+function migrate(s){
+  var b = blank(), k;
+  if(!s || typeof s !== "object") return b;
+  for(k in b){ if(!(k in s)) s[k] = b[k]; }
+  for(k in b.settings){ if(!(k in s.settings)) s.settings[k] = b.settings[k]; }
+  var proto = newTask("", 25);
+  s.tasks = (s.tasks || []).map(function(t){
+    for(var p in proto){ if(!(p in t)) t[p] = proto[p]; }
+    return t;
+  });
+  if(s.day !== todayKey()) rollDay(s);
+  return s;
+}
+
+// New day. Unfinished work survives, and surviving counts as being deferred once.
+function rollDay(s){
+  s.tasks.forEach(function(t){
+    if(t.spent > 60) s.log.unshift({ date:s.day, title:t.title, est:t.est, actual:Math.round(t.spent/60), done:t.status==="done" });
+  });
+  s.log = s.log.slice(0, 60);
+  s.day = todayKey();
+  s.runningSince = null; s.microUntil = null; s.microDone = false;
+  s.nudgeIdx = 0; s.overrunSeen = false; s.transitionUntil = null; s.quietUntil = null;
+  s.tasks = s.tasks.filter(function(t){ return t.status !== "done"; });
+  s.tasks.forEach(function(t){ t.spent = 0; t.status = "todo"; t.defers = (t.defers||0) + 1; });
+  if(!s.tasks.some(function(t){ return t.id === s.activeId; })) s.activeId = s.tasks.length ? s.tasks[0].id : null;
+}
+
+/* Storage adapter. Prefers the host API when one exists, otherwise localStorage.
+   Everything stays on the device either way. There is no server. */
+var HOST = !!(window.storage && window.storage.get && window.storage.set);
+
+function readStore(){
+  if(HOST){
+    return window.storage.get(KEY, false)
+      .then(function(r){ return r && r.value ? r.value : null; })
+      .catch(function(){ return null; });
+  }
+  try { return Promise.resolve(window.localStorage.getItem(KEY)); }
+  catch(e){ return Promise.resolve(null); }
+}
+
+function writeStore(str){
+  if(HOST){
+    try { window.storage.set(KEY, str, false); } catch(e){}
+    return;
+  }
+  try { window.localStorage.setItem(KEY, str); }
+  catch(e){ storeFailed(); }
+}
+
+var warnedStore = false;
+function storeFailed(){
+  if(warnedStore) return;
+  warnedStore = true;
+  toast("Cannot write to storage. This session will not be saved.");
+}
+
+function save(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(function(){ writeStore(JSON.stringify(S)); }, 300);
+}
+
+function load(cb){
+  readStore().then(function(v){
+    try { S = migrate(v ? JSON.parse(v) : null); } catch(e){ S = blank(); }
+    cb();
+  });
+}
+
+function exportState(){
+  var blob = new Blob([JSON.stringify(S, null, 2)], { type: "application/json" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "hourglass-" + todayKey() + ".json";
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+}
+
+/* ---------- helpers ---------- */
+
+function byId(id){ for(var i=0;i<S.tasks.length;i++) if(S.tasks[i].id === id) return S.tasks[i]; return null; }
+function active(){ return S.activeId ? byId(S.activeId) : null; }
+function running(){ return S.runningSince != null; }
+function todos(){ return S.tasks.filter(function(t){ return t.status === "todo"; }); }
+function quiet(){ return S.quietUntil && Date.now() < S.quietUntil; }
+
+function liveSpent(t){
+  if(!t) return 0;
+  return t.spent + (running() && t.id === S.activeId ? (Date.now() - S.runningSince)/1000 : 0);
+}
+
+function dayEndMs(){
+  var p = (S.settings.dayEnd || "17:30").split(":");
+  var d = new Date();
+  d.setHours(parseInt(p[0],10)||17, parseInt(p[1],10)||30, 0, 0);
+  return d.getTime();
+}
+function minsLeftToday(){ return Math.max(0, (dayEndMs() - Date.now())/60000); }
+function cost(t){ return t.est * S.settings.multiplier + S.settings.buffer; }
+function plannedMins(){ var n = 0; todos().forEach(function(t){ n += cost(t); }); return n; }
+function rawMins(){ var n = 0; todos().forEach(function(t){ n += t.est; }); return n; }
+
+// Which items are the overflow, musts protected first.
+function overflow(){
+  var left = minsLeftToday(), acc = 0, out = [];
+  todos().slice().sort(function(a,b){ return (b.must?1:0) - (a.must?1:0); }).forEach(function(t){
+    acc += cost(t);
+    if(acc > left) out.push(t);
+  });
+  return out;
+}
+
+function daysTo(due){
+  if(!due) return null;
+  var d = new Date(due + "T00:00:00");
+  if(isNaN(d.getTime())) return null;
+  var t = new Date(); t.setHours(0,0,0,0);
+  return Math.round((d.getTime() - t.getTime())/86400000);
+}
+function runway(n){
+  if(n === null) return "";
+  if(n < 0) return Math.abs(n) + (Math.abs(n)===1 ? " day overdue" : " days overdue");
+  if(n === 0) return "due today";
+  if(n === 1) return "due tomorrow";
+  return "due in " + n + " days";
+}
+
+function hm(mins){
+  mins = Math.max(0, Math.round(mins));
+  var h = Math.floor(mins/60), m = mins%60;
+  if(h && m) return h + "h " + m + "m";
+  if(h) return h + "h";
+  return m + "m";
+}
+function clock(secs){
+  secs = Math.max(0, Math.floor(secs));
+  var h = Math.floor(secs/3600), m = Math.floor(secs%3600/60), s = secs%60;
+  return h ? h + ":" + pad(m) + ":" + pad(s) : m + ":" + pad(s);
+}
+function esc(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" })[c];
+  });
+}
+function toast(msg){
+  var el = document.getElementById("toast");
+  el.textContent = msg; el.classList.add("on");
+  clearTimeout(toastT);
+  toastT = setTimeout(function(){ el.classList.remove("on"); }, 3400);
+}
+function chime(high){
+  if(!S.settings.sound) return;
+  try {
+    if(!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if(actx.state === "suspended") actx.resume();
+    var t = actx.currentTime;
+    [0, 0.16].forEach(function(off, i){
+      var o = actx.createOscillator(), g = actx.createGain();
+      o.type = "sine";
+      o.frequency.value = high ? (i ? 784 : 587) : (i ? 523 : 659);
+      g.gain.setValueAtTime(0.0001, t + off);
+      g.gain.exponentialRampToValueAtTime(0.14, t + off + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + off + 0.42);
+      o.connect(g); g.connect(actx.destination);
+      o.start(t + off); o.stop(t + off + 0.45);
+    });
+  } catch(e){ /* silence is acceptable */ }
+}
+/* ---- device plumbing ----
+   Notifications only reach you while the app is alive. Browsers do not support
+   scheduling a notification for a future time, so nothing fires once the OS
+   suspends the app. The catch-up message on return is the honest fallback. */
+var swReg = null, wakeLock = null, installPrompt = null, hiddenAt = null;
+
+function canNotify(){
+  return ("Notification" in window) && Notification.permission === "granted";
+}
+
+function notify(title, body){
+  if(!canNotify() || !document.hidden) return;
+  var opts = { body: body, tag: "hourglass", renotify: true, icon: "icons/icon-192.png", badge: "icons/icon-192.png" };
+  try {
+    if(swReg && swReg.showNotification) swReg.showNotification(title, opts);
+    else new Notification(title, opts);
+  } catch(e){}
+}
+
+function askNotify(){
+  if(!("Notification" in window)){ toast("This browser has no notification support."); return; }
+  Notification.requestPermission().then(function(r){
+    renderPlan();
+    toast(r === "granted"
+      ? "Allowed. Alerts reach you while the app is open in the background."
+      : "Not allowed. Alerts will only appear inside the app.");
+  }).catch(function(){});
+}
+
+// Keeps the screen on while a task runs, which is also what keeps the timer alive.
+function keepAwake(on){
+  try {
+    if(on && !wakeLock && navigator.wakeLock && navigator.wakeLock.request){
+      navigator.wakeLock.request("screen").then(function(w){
+        wakeLock = w;
+        w.addEventListener("release", function(){ wakeLock = null; });
+      }).catch(function(){});
+    } else if(!on && wakeLock){
+      wakeLock.release().catch(function(){});
+      wakeLock = null;
+    }
+  } catch(e){}
+}
+
+// Never wipe an input the user is mid-way through.
+function typingIn(sel){
+  var a = document.activeElement;
+  return !!(a && (a.tagName === "INPUT") && a.closest(sel));
+}
+
+/* ---------- actions ---------- */
+
+function startTask(id, micro){
+  if(running()) pause();
+  var t = byId(id); if(!t) return;
+  S.activeId = id;
+  S.runningSince = Date.now();
+  S.microUntil = micro ? Date.now() + 120000 : null;
+  S.microDone = !micro;
+  S.nudgeIdx = 0; S.overrunSeen = false; S.transitionUntil = null;
+  t.starts = (t.starts||0) + 1;
+  askStuck = false;
+  keepAwake(true);
+  chime(false); save(); render();
+}
+
+function pause(){
+  var t = active();
+  if(t && running()) t.spent += (Date.now() - S.runningSince)/1000;
+  S.runningSince = null; S.microUntil = null;
+  keepAwake(false);
+  save();
+}
+
+function finish(status){
+  var t = active(); if(!t) return;
+  pause();
+  t.status = status;
+  if(status === "parked") t.defers = (t.defers||0) + 1;
+  S.microDone = false;
+  S.transitionUntil = Date.now() + 5*60000;
+  chime(true);
+  var next = todos()[0];
+  S.activeId = next ? next.id : null;
+  askStuck = false;
+  save(); render();
+  toast(status === "done" ? "Done. Five minutes to land before the next one." : "Parked. It stays on the list.");
+}
+
+function addTask(title, est){
+  title = (title || "").trim();
+  if(!title) return null;
+  var t = newTask(title, est);
+  S.tasks.push(t);
+  if(!active()) S.activeId = t.id;
+  save(); render();
+  return t;
+}
+
+function move(id, dir){
+  var i = -1, j;
+  for(var k=0;k<S.tasks.length;k++) if(S.tasks[k].id === id) i = k;
+  j = i + dir;
+  if(i < 0 || j < 0 || j >= S.tasks.length) return;
+  var tmp = S.tasks[i]; S.tasks[i] = S.tasks[j]; S.tasks[j] = tmp;
+  save(); render();
+}
+
+function removeTask(id){
+  if(id === S.activeId){ pause(); S.activeId = null; }
+  S.tasks = S.tasks.filter(function(t){ return t.id !== id; });
+  if(!active()){ var n = todos()[0]; S.activeId = n ? n.id : null; }
+  if(openDetail === id) openDetail = null;
+  save(); render();
+}
+
+/* ---------- render: NOW ---------- */
+
+function renderNow(){
+  if(typingIn("#now-body")) return;
+  var box = document.getElementById("now-body");
+  var t = active();
+
+  if(!t){
+    box.innerHTML = '<div class="empty"><p>Nothing picked yet. Name one thing you have to do today and the clock will take it from there.</p>'
+      + '<button class="start" data-go="plan" style="max-width:280px;margin:0 auto">Open the plan</button></div>';
+    renderUpNext(); return;
+  }
+
+  var spent = liveSpent(t), target = Math.max(60, t.est*60);
+  var over = spent > target, left = target - spent;
+  var html = "";
+
+  if(S.transitionUntil && Date.now() < S.transitionUntil && !running()){
+    html += '<div class="panel"><p>Transition: <span id="trans-clock">' + clock((S.transitionUntil-Date.now())/1000) + '</span>. '
+         + 'Next is <b>' + esc(t.title) + '</b>'
+         + (t.first ? ', starting with <b>' + esc(t.first) + '</b>' : '') + '.</p>'
+         + '<div class="acts two"><button class="primary" data-act="start">Start it now</button>'
+         + '<button data-act="skiptrans">I have landed</button></div></div>';
+  }
+
+  var d = daysTo(t.due);
+  html += '<p class="task-sub">' + (running() ? "Running" : "Up next") + '</p>'
+       + '<h1 class="task-title">' + esc(t.title) + '</h1>'
+       + '<p class="task-sub' + (d !== null && d <= 1 ? " due" : "") + '">You said ' + t.est + ' minutes'
+       + (d !== null ? ' &middot; ' + runway(d) : '')
+       + (t.defers >= 2 ? ' &middot; moved ' + t.defers + ' times' : '') + '</p>';
+
+  // The first physical action. Written when planning, read when starting.
+  if(askStuck && !running()){
+    html += '<div class="panel"><p>What is the smallest physical thing that would count as starting? '
+         + 'Not the task. The first movement.</p>'
+         + '<input type="text" id="stuck-in" placeholder="e.g. open the file and scroll to section 3" autocomplete="off">'
+         + '<div class="row"><button data-act="stuck-save">Save it and start</button></div></div>';
+  } else if(t.first){
+    html += '<div class="firstact"><span>Start by doing exactly this</span><p>' + esc(t.first) + '</p>'
+         + '<button data-act="stuck">Change it</button></div>';
+  } else if(!running()){
+    html += '<div class="firstact" style="border-left-color:var(--line)"><span>No first step written</span>'
+         + '<p style="font-weight:500;color:var(--muted);font-size:15px">Deciding what to do first is the expensive part. Do it now, not in a minute.</p>'
+         + '<button data-act="stuck">Write the first step</button></div>';
+  }
+
+  html += '<div class="ring-wrap"><svg class="ring" viewBox="0 0 240 240" role="img" aria-label="'
+       + (over ? "Over estimate by " + hm((spent-target)/60) : hm(left/60) + " of your estimate left") + '">'
+       + '<circle class="ring-track" cx="120" cy="120" r="100"></circle>'
+       + '<circle class="ring-edge" cx="120" cy="120" r="106.5"></circle>'
+       + '<circle class="ring-edge" cx="120" cy="120" r="93.5"></circle>'
+       + '<circle class="ring-arc' + (over ? " over" : "") + '" cx="120" cy="120" r="100" stroke-dasharray="'
+       + (Math.min(1, spent/target)*C).toFixed(1) + ' ' + C.toFixed(1) + '"></circle>'
+       + '<text class="ring-big" x="120" y="122" text-anchor="middle">' + clock(over ? spent-target : left) + '</text>'
+       + '<text class="ring-small' + (over ? " over" : "") + '" x="120" y="148" text-anchor="middle">'
+       + (over ? "past your estimate" : "left of " + t.est + "m") + '</text></svg></div>';
+
+  if(running()){
+    html += '<button class="start stop" data-act="pause">Pause</button>'
+         + '<p class="start-note">Pausing is not quitting. The clock remembers.</p>';
+  } else {
+    html += '<button class="start" data-act="micro">Just start. Two minutes.</button>'
+         + '<p class="start-note">Two minutes, then you get to decide again. '
+         + '<button class="linkbtn" data-act="start">Or start the full ' + t.est + 'm</button></p>';
+  }
+
+  html += '<div class="acts"><button class="primary" data-act="done">Done</button>'
+       + '<button data-act="more">+10 min</button>'
+       + '<button data-act="park">Park it</button></div>';
+
+  html += '<p class="quiet">' + (quiet()
+        ? 'Nudges off for ' + hm((S.quietUntil - Date.now())/60000) + '. <button class="linkbtn" data-act="unquiet">Turn them back on</button>'
+        : '<button class="linkbtn" data-act="quiet">Quiet the nudges for 30 minutes</button>') + '</p>';
+
+  if(S.microUntil && Date.now() >= S.microUntil && running() && !S.microDone){
+    html += '<div class="panel"><p>That was two minutes. The hard part is behind you.</p>'
+         + '<div class="acts two"><button class="primary" data-act="keep">Keep going</button>'
+         + '<button data-act="pause">Stop here, that counts</button></div></div>';
+  }
+
+  if(over){
+    html += '<div class="panel red"><p>You are ' + hm((spent-target)/60) + ' past what you guessed. '
+         + 'Not a problem, just information. What is true right now?</p>'
+         + '<div class="acts"><button data-act="more">Need 10 more</button>'
+         + '<button class="primary" data-act="done">Actually done</button>'
+         + '<button data-act="park">Park it</button></div></div>';
+  }
+
+  box.innerHTML = html;
+  if(askStuck && !running()){ var el = document.getElementById("stuck-in"); if(el){ el.value = t.first || ""; el.focus(); } }
+  renderUpNext();
+}
+
+function renderUpNext(){
+  var el = document.getElementById("upnext");
+  var rest = todos().filter(function(t){ return t.id !== S.activeId; });
+  if(!rest.length){ el.innerHTML = ""; return; }
+  var h = '<h2>Then</h2>';
+  rest.slice(0,4).forEach(function(t){
+    var d = daysTo(t.due);
+    h += '<div class="upnext-row"><span>' + (t.must ? "&#9679; " : "") + esc(t.title) + '</span>'
+      + '<em>' + t.est + 'm' + (d !== null && d <= 3 ? ", " + runway(d) : "") + '</em>'
+      + '<button data-jump="' + t.id + '">Do this instead</button></div>';
+  });
+  el.innerHTML = h;
+}
+
+/* ---------- render: PLAN ---------- */
+
+function renderChips(){
+  document.getElementById("t-chips").innerHTML = EST_OPTS.map(function(n){
+    return '<button class="chip" data-est="' + n + '" aria-pressed="' + (n === pickedEst) + '">' + n + ' min</button>';
+  }).join("");
+}
+
+function renderPlan(){
+  if(typingIn("#tasklist")) return;
+  var list = document.getElementById("tasklist");
+  var over = overflow().map(function(t){ return t.id; });
+
+  if(!S.tasks.length){
+    list.innerHTML = '<p class="hint">Empty. Three things is a real day. Ten things is a wish.</p>';
+  } else {
+    list.innerHTML = S.tasks.map(function(t){
+      var d = daysTo(t.due), meta = [];
+      if(t.first) meta.push('<b>First:</b> ' + esc(t.first));
+      else meta.push('<span style="color:var(--avail);font-weight:600">no first step yet</span>');
+      if(d !== null) meta.push('<span class="' + (d <= 1 ? "warn" : "") + '">' + runway(d) + '</span>');
+      if(t.defers >= 2) meta.push('<span class="warn">moved ' + t.defers + '&times;</span>');
+      if(over.indexOf(t.id) >= 0) meta.push('<span class="warn">will not fit</span>');
+
+      return '<div class="task ' + t.status + '">'
+        + '<div class="task-row">'
+        + '<div class="move"><button data-mv="' + t.id + '" data-d="-1" aria-label="Move up">&#9650;</button>'
+        + '<button data-mv="' + t.id + '" data-d="1" aria-label="Move down">&#9660;</button></div>'
+        + '<button class="task-name" data-open="' + t.id + '">' + esc(t.title) + '</button>'
+        + '<button class="must" data-must="' + t.id + '" aria-pressed="' + !!t.must + '" aria-label="Must happen today">&#9679;</button>'
+        + '<div class="est"><button data-est-id="' + t.id + '" data-d="-5" aria-label="Less time">&minus;</button>'
+        + '<span>' + t.est + 'm</span>'
+        + '<button data-est-id="' + t.id + '" data-d="5" aria-label="More time">+</button></div>'
+        + '<button class="kill" data-del="' + t.id + '" aria-label="Remove">&times;</button>'
+        + '</div>'
+        + '<div class="meta">' + meta.join("") + '</div>'
+        + (openDetail === t.id
+            ? '<div class="detail">'
+              + '<label for="f-' + t.id + '">First physical action. Write it now, while you can think.</label>'
+              + '<input type="text" id="f-' + t.id + '" data-first="' + t.id + '" value="' + esc(t.first) + '" placeholder="e.g. open the workbook, go to the Q3 tab">'
+              + '<label for="d-' + t.id + '">Due date, if it has one</label>'
+              + '<input type="date" id="d-' + t.id + '" data-due="' + t.id + '" value="' + esc(t.due) + '">'
+              + '<button class="close" data-close="1">Save</button></div>'
+            : '')
+        + '</div>';
+    }).join("");
+  }
+
+  var planned = plannedMins(), left = minsLeftToday(), of = overflow();
+  var cap = document.getElementById("capacity");
+  cap.className = "capacity" + (of.length ? " over" : "");
+  if(!todos().length){
+    cap.innerHTML = '<p>' + hm(left) + ' of working day left, nothing claimed.</p>';
+  } else {
+    cap.innerHTML = '<p>' + todos().length + ' things, ' + hm(planned) + ' of real time. You have ' + hm(left) + '.</p>'
+      + '<p>Raw guesses total ' + hm(rawMins()) + ', stretched ' + S.settings.multiplier
+      + '&times; plus ' + S.settings.buffer + 'm switching cost each.</p>'
+      + (of.length
+          ? '<p>These are past the edge of the day. Move them now or they move themselves:</p><ul>'
+            + of.map(function(t){ return '<li>' + esc(t.title) + '</li>'; }).join("") + '</ul>'
+          : '<p>' + hm(left - planned) + ' of slack. Leave it there.</p>');
+  }
+
+  var nl = document.getElementById("notelist");
+  nl.innerHTML = !S.notes.length
+    ? '<p class="hint">Anything you park while working lands here.</p>'
+    : S.notes.map(function(n){
+        return '<div class="note"><p>' + esc(n.text) + '</p>'
+          + '<button data-note-task="' + n.id + '">Make it a task</button>'
+          + '<button class="kill" data-note-del="' + n.id + '" aria-label="Delete">&times;</button></div>';
+      }).join("");
+
+  var st = S.settings;
+  document.getElementById("settings").innerHTML =
+      '<div class="set-row"><label for="s-end">Day ends at<small>Everything above counts down to this.</small></label><input type="time" id="s-end" value="' + st.dayEnd + '"></div>'
+    + '<div class="set-row"><label for="s-mult">Reality multiplier<small>Your guesses get multiplied by this before they touch the day.</small></label><input type="number" id="s-mult" min="1" max="4" step="0.1" value="' + st.multiplier + '"></div>'
+    + '<div class="set-row"><label for="s-buf">Switching cost<small>Minutes added per task, because getting into the next thing is not free.</small></label><input type="number" id="s-buf" min="0" max="30" step="1" value="' + st.buffer + '"></div>'
+    + '<div class="set-row"><label for="s-nud">Nudge every<small>Minutes between check-ins while a task runs.</small></label><input type="number" id="s-nud" min="2" max="60" step="1" value="' + st.nudge + '"></div>'
+    + '<div class="set-row"><label>Sound<small>A two-note chime on start, nudge, and finish.</small></label><button class="toggle" id="s-snd" aria-pressed="' + !!st.sound + '" aria-label="Sound"></button></div>'
+    + '<div class="set-row"><label>Alerts<small>' + notifyBlurb() + '</small></label>'
+      + (("Notification" in window) && Notification.permission === "granted"
+          ? '<span style="flex:none;color:var(--avail);font-weight:600;font-size:14px">On</span>'
+          : '<button class="sbtn" id="s-notif">Allow</button>') + '</div>'
+    + (installPrompt ? '<div class="set-row"><label>Install<small>Adds it to your home screen and runs it without browser chrome.</small></label><button class="sbtn" id="s-install">Install</button></div>' : '')
+    + '<div class="set-row"><label>Your data<small>Everything is stored on this device only. Nothing is sent anywhere.</small></label><button class="sbtn" id="s-export">Export</button></div>';
+}
+
+/* ---------- render: REVIEW ---------- */
+
+function notifyBlurb(){
+  if(!("Notification" in window)) return "This browser cannot show notifications.";
+  if(Notification.permission === "denied") return "Blocked in browser settings. Alerts appear inside the app only.";
+  return "Reaches you while the app is backgrounded. Once the system suspends it, nothing fires until you return.";
+}
+
+function renderReview(){
+  // Things the app has actually watched you do, said without judgement.
+  var stuck = S.tasks.filter(function(t){ return t.defers >= 2 && t.status !== "done"; });
+  var restarted = S.tasks.filter(function(t){ return t.starts >= 3 && t.status !== "done"; });
+  var p = document.getElementById("patterns");
+  var h = "";
+  if(stuck.length){
+    h += '<h2>What keeps moving</h2>';
+    stuck.forEach(function(t){
+      h += '<div class="panel"><p>' + esc(t.title) + ' has moved ' + t.defers + ' times'
+        + (t.first ? '.' : ', and still has no first step written.')
+        + ' A task that will not start is usually more than one task.</p>'
+        + '<div class="acts two"><button class="primary" data-fix="' + t.id + '">Write a smaller first step</button>'
+        + '<button data-del="' + t.id + '">Drop it</button></div></div>';
+    });
+  }
+  if(restarted.length){
+    h += '<h2>What keeps getting interrupted</h2>'
+      + '<p class="hint">' + restarted.map(function(t){ return esc(t.title) + " (" + t.starts + " starts)"; }).join(", ")
+      + '. Either the estimate is too long for one sitting, or something is pulling you off it.</p>';
+  }
+  p.innerHTML = h;
+
+  var rows = [];
+  S.tasks.forEach(function(t){ var sp = liveSpent(t); if(sp > 30) rows.push({ title:t.title, est:t.est, actual:sp/60 }); });
+  S.log.filter(function(l){ return l.date === S.day; }).forEach(function(l){ rows.push({ title:l.title, est:l.est, actual:l.actual }); });
+
+  var el = document.getElementById("revlist");
+  if(!rows.length){
+    el.innerHTML = '<p class="hint">Nothing timed yet today. This fills in as you work, and it is the only part of the app that makes your guesses better.</p>';
+    document.getElementById("calib").innerHTML = "";
+    return;
+  }
+  var maxv = Math.max.apply(null, rows.map(function(r){ return Math.max(r.est, r.actual); }));
+  el.innerHTML = rows.map(function(r){
+    return '<div class="rev"><div class="rev-top"><b>' + esc(r.title) + '</b>'
+      + '<span>' + Math.round(r.est) + 'm guessed &middot; ' + Math.round(r.actual) + 'm real</span></div>'
+      + '<div class="rev-bar"><div class="rev-est" style="width:' + (r.est/maxv*100).toFixed(1) + '%"></div>'
+      + '<div class="rev-act' + (r.actual > r.est ? " over" : "") + '" style="width:' + (r.actual/maxv*100).toFixed(1) + '%"></div>'
+      + '</div></div>';
+  }).join("");
+
+  var all = S.log.concat(rows);
+  var ratios = all.filter(function(l){ return l.est > 0 && l.actual > 1; })
+                  .map(function(l){ return l.actual/l.est; }).sort(function(a,b){ return a-b; });
+  var cal = document.getElementById("calib");
+  if(ratios.length < 4){
+    cal.innerHTML = '<p class="hint">After four or so timed tasks this will suggest a multiplier from your own numbers instead of a borrowed default.</p>';
+    return;
+  }
+  var sug = Math.max(1, Math.min(4, Math.round(ratios[Math.floor(ratios.length/2)]*10)/10));
+  cal.innerHTML = '<div class="panel"><p>Across ' + ratios.length + ' timed tasks, things took about ' + sug
+    + '&times; your guess. Yours is set to ' + S.settings.multiplier + '&times;.</p>'
+    + '<div class="row"><button data-cal="' + sug + '">Use ' + sug + '&times;</button></div></div>';
+}
+
+/* ---------- gauge and loop ---------- */
+
+function renderGauge(){
+  var left = minsLeftToday(), planned = plannedMins();
+  document.getElementById("g-left").textContent = hm(left);
+  var r = document.getElementById("g-right"), f = document.getElementById("g-fill");
+  if(!todos().length){
+    r.className = "gauge-right"; r.textContent = "nothing claimed";
+    f.className = "bar-fill"; f.style.width = "0%"; return;
+  }
+  var over = planned > left;
+  r.className = "gauge-right" + (over ? " over" : "");
+  r.textContent = hm(planned) + " planned" + (over ? " (" + hm(planned-left) + " too much)" : "");
+  f.className = "bar-fill" + (over ? " over" : "");
+  f.style.width = Math.min(100, left > 0 ? planned/left*100 : 100).toFixed(1) + "%";
+}
+
+function tick(){
+  if(S.day !== todayKey()){ rollDay(S); save(); render(); return; }
+  renderGauge();
+
+  var t = active();
+  if(running() && t){
+    var spent = liveSpent(t), target = Math.max(60, t.est*60), over = spent > target;
+    var arc = document.querySelector(".ring-arc"), big = document.querySelector(".ring-big"), sml = document.querySelector(".ring-small");
+    if(arc){
+      arc.setAttribute("stroke-dasharray", (Math.min(1, spent/target)*C).toFixed(1) + " " + C.toFixed(1));
+      arc.classList.toggle("over", over);
+    }
+    if(big) big.textContent = clock(over ? spent-target : target-spent);
+    if(sml){
+      sml.textContent = over ? "past your estimate" : "left of " + t.est + "m";
+      sml.classList.toggle("over", over);
+    }
+    var mins = Math.floor(spent/60);
+    var idx = Math.floor(mins / Math.max(2, S.settings.nudge));
+    if(idx > S.nudgeIdx){
+      S.nudgeIdx = idx;
+      if(!quiet()){
+        chime(false);
+        toast(mins + " minutes in. Still the right thing?");
+        notify(mins + " minutes in", t.title + ". Still the right thing?");
+      }
+      save();
+    }
+    if(over && !S.overrunSeen){
+      S.overrunSeen = true;
+      if(!quiet()){ chime(true); notify("Past your estimate", t.title + " has gone over " + t.est + " minutes."); }
+      save(); render(); return;
+    }
+    if(S.microUntil && Date.now() >= S.microUntil && !S.microDone){ chime(true); render(); return; }
+  }
+
+  if(S.transitionUntil){
+    if(Date.now() >= S.transitionUntil){ S.transitionUntil = null; save(); render(); }
+    else {
+      var tc = document.getElementById("trans-clock");
+      if(tc) tc.textContent = clock((S.transitionUntil - Date.now())/1000);
+      else if(!running()) renderNow();
+    }
+  }
+}
+
+function render(){ renderGauge(); renderNow(); renderPlan(); renderReview(); renderChips(); }
+
+function show(v){
+  ["now","plan","review"].forEach(function(n){ document.getElementById("view-" + n).classList.toggle("on", n === v); });
+  document.querySelectorAll(".tabs button").forEach(function(b){ b.setAttribute("aria-selected", b.dataset.v === v); });
+  window.scrollTo(0,0);
+}
+
+/* ---------- wiring ---------- */
+
+document.addEventListener("click", function(e){
+  var el = e.target.closest("button");
+  if(!el) return;
+  var d = el.dataset, t;
+
+  if(d.v) return show(d.v);
+  if(d.go) return show(d.go);
+
+  if(d.act){
+    t = active();
+    if(d.act === "micro" && t) return startTask(t.id, true);
+    if(d.act === "start" && t) return startTask(t.id, false);
+    if(d.act === "pause"){ pause(); S.microDone = true; render(); return; }
+    if(d.act === "keep"){ S.microDone = true; S.microUntil = null; save(); render(); return; }
+    if(d.act === "done") return finish("done");
+    if(d.act === "park") return finish("parked");
+    if(d.act === "skiptrans"){ S.transitionUntil = null; save(); render(); return; }
+    if(d.act === "more" && t){ t.est += 10; S.overrunSeen = false; save(); render(); toast("Ten more minutes. It shows up in the review."); return; }
+    if(d.act === "stuck"){ askStuck = true; renderNow(); return; }
+    if(d.act === "stuck-save" && t){
+      var inp = document.getElementById("stuck-in");
+      t.first = inp ? inp.value.trim() : "";
+      askStuck = false; save();
+      if(t.first) startTask(t.id, true); else render();
+      return;
+    }
+    if(d.act === "quiet"){ S.quietUntil = Date.now() + 30*60000; save(); renderNow(); toast("Nudges off for 30 minutes."); return; }
+    if(d.act === "unquiet"){ S.quietUntil = null; save(); renderNow(); return; }
+  }
+
+  if(d.jump) return startTask(d.jump, true);
+  if(d.est){ pickedEst = +d.est; renderChips(); return; }
+  if(d.mv) return move(d.mv, +d.d);
+  if(d.del) return removeTask(d.del);
+  if(d.open){ openDetail = (openDetail === d.open ? null : d.open); renderPlan(); return; }
+  if(d.close){ openDetail = null; renderPlan(); return; }
+  if(d.must){ t = byId(d.must); if(t){ t.must = !t.must; save(); render(); } return; }
+  if(d.fix){ openDetail = d.fix; show("plan"); renderPlan(); var fi = document.getElementById("f-" + d.fix); if(fi) fi.focus(); return; }
+  if(d.estId){ t = byId(d.estId); if(t){ t.est = Math.max(5, t.est + (+d.d)); save(); render(); } return; }
+  if(d.noteTask){
+    var n = null;
+    S.notes.forEach(function(x){ if(x.id === d.noteTask) n = x; });
+    if(n){ S.notes = S.notes.filter(function(x){ return x.id !== n.id; }); var nt = addTask(n.text, pickedEst); if(nt){ openDetail = nt.id; renderPlan(); } }
+    return;
+  }
+  if(d.noteDel){ S.notes = S.notes.filter(function(x){ return x.id !== d.noteDel; }); save(); render(); return; }
+  if(d.cal){ S.settings.multiplier = +d.cal; save(); render(); toast("Multiplier set to " + d.cal + "x."); return; }
+
+  if(el.id === "t-add"){
+    var i = document.getElementById("t-name");
+    var made = addTask(i.value, pickedEst);
+    i.value = "";
+    if(made){ openDetail = made.id; show("plan"); renderPlan(); var ff = document.getElementById("f-" + made.id); if(ff) ff.focus(); }
+    return;
+  }
+  if(el.id === "cap-go"){
+    var c = document.getElementById("cap");
+    if(c.value.trim()){
+      S.notes.unshift({ id:uid(), text:c.value.trim() });
+      c.value = ""; save(); renderPlan();
+      toast("Parked. It is on the Plan tab when you want it.");
+    }
+    return;
+  }
+  if(el.id === "s-notif") return askNotify();
+  if(el.id === "s-export") return exportState();
+  if(el.id === "s-install"){
+    if(!installPrompt) return;
+    installPrompt.prompt();
+    installPrompt.userChoice.finally(function(){ installPrompt = null; renderPlan(); });
+    return;
+  }
+  if(el.id === "s-snd"){
+    S.settings.sound = !S.settings.sound;
+    el.setAttribute("aria-pressed", S.settings.sound);
+    save(); if(S.settings.sound) chime(false);
+    return;
+  }
+});
+
+document.addEventListener("keydown", function(e){
+  if(e.key !== "Enter") return;
+  if(e.target.id === "t-name") document.getElementById("t-add").click();
+  else if(e.target.id === "cap") document.getElementById("cap-go").click();
+  else if(e.target.id === "stuck-in"){
+    var b = document.querySelector('[data-act="stuck-save"]'); if(b) b.click();
+  } else if(e.target.dataset && e.target.dataset.first){
+    e.target.blur();
+  }
+});
+
+document.addEventListener("change", function(e){
+  var d = e.target.dataset || {}, t, id = e.target.id;
+  if(d.first){ t = byId(d.first); if(t){ t.first = e.target.value.trim(); save(); renderNow(); } return; }
+  if(d.due){ t = byId(d.due); if(t){ t.due = e.target.value; save(); renderNow(); } return; }
+  if(id === "s-end") S.settings.dayEnd = e.target.value || "17:30";
+  else if(id === "s-mult") S.settings.multiplier = Math.max(1, Math.min(4, +e.target.value || 1.5));
+  else if(id === "s-buf") S.settings.buffer = Math.max(0, Math.min(30, +e.target.value || 0));
+  else if(id === "s-nud") S.settings.nudge = Math.max(2, Math.min(60, +e.target.value || 10));
+  else return;
+  save(); render();
+});
+
+/* Coming back after an absence is the moment time blindness is most visible,
+   so say plainly how long it was rather than pretending the gap did not happen. */
+document.addEventListener("visibilitychange", function(){
+  if(document.hidden){ hiddenAt = Date.now(); return; }
+  var away = hiddenAt ? (Date.now() - hiddenAt)/60000 : 0;
+  hiddenAt = null;
+  if(running()){
+    keepAwake(true);
+    if(away >= 2) toast("You were away " + hm(away) + ". The timer kept running.");
+  }
+  render();
+});
+
+window.addEventListener("beforeinstallprompt", function(e){
+  e.preventDefault();
+  installPrompt = e;
+  if(S) renderPlan();
+});
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("sw.js")
+      .then(function(r){ swReg = r; })
+      .catch(function(){ /* works fine without it, just not offline */ });
+  });
+}
+
+load(function(){
+  if(running() && Date.now() - S.runningSince > 4*3600*1000){
+    S.runningSince = null; S.microUntil = null;
+    toast("A timer was still running from a while back. Stopped it rather than guess.");
+  }
+  render();
+  if(running()) keepAwake(true);
+  setInterval(tick, 500);
+});
+
+})();
+</script>
