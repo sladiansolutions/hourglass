@@ -40,9 +40,11 @@ Then open `http://localhost:8000`. Service workers are allowed on `localhost` wi
 
 ## What actually works, and what does not
 
-**Works offline.** After the first load the shell is cached. Your data was never on a network to begin with.
+**Works offline.** After the first load the shell is cached. Your data was never on a network to begin with, unless you turn sync on (below).
 
-**Data is local only.** `localStorage` on the device, under the key `hourglass:state:v2`. Nothing is transmitted. Settings has an Export button that writes a JSON file, which is the only backup that exists. Clearing site data, or deleting the installed app on iOS, deletes everything.
+**Data is local by default.** `localStorage` on the device, under the key `hourglass:state:v2`. Settings has an Export button that writes a JSON file, which is a backup even if you never turn sync on. Clearing site data, or deleting the installed app on iOS, deletes everything on that device.
+
+**Sync is opt-in.** Settings has a "Turn on" button that generates a random pairing code and starts pushing your state to a small backend (Supabase). Entering that same code on another device links it to the same copy; whichever device saved most recently wins on conflict, there is no merge. The code is the only credential — nobody else can read or write that row without it, and the backend has no other access to the table (Row-Level Security, deny by default, unlockable only through two functions that require the exact code). Turning sync off on a device just stops that device from pushing or pulling; it does not delete the shared copy.
 
 **Notifications are partial, and this is the real limitation.** The browser will show an alert while the app is backgrounded but still alive. It will not show one once the OS has suspended the app, because scheduling a notification for a future time is not something browsers support. The Notification Triggers API was designed for exactly this and never shipped past an origin trial. Verify the current state before assuming it is still true; this is the kind of thing that changes.
 

@@ -243,6 +243,14 @@ var KEY = "hourglass:state:v2";
 var C = 2 * Math.PI * 100;
 var EST_OPTS = [5, 15, 25, 45, 90];
 var pickedEst = 25;
+
+/* ---- sync: optional, opt-in cross-device copy via a pairing code ----
+   The code is the only credential. Table access on the backend is locked
+   to two RPC functions that require it; nothing is readable without it. */
+var SUPABASE_URL = "https://ktjhqnjjejpgvnclpxbp.supabase.co";
+var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0amhxbmpqZWpwZ3ZuY2xweGJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkzMzI2NzUsImV4cCI6MjEwNDkwODY3NX0.2S3VukDZ4m3Tl96-6EMwMb-a-8ZggHIfvfUIF9OyFog";
+var SYNC_KEY = "hourglass:synccode:v1";
+var syncCode = null;
 var openDetail = null;   // task id whose editor is expanded
 var askStuck = false;    // "what is the first step" prompt showing on Now
 var S = null, saveTimer = null, toastT = null, actx = null;
@@ -258,7 +266,7 @@ function blank(){
     day: todayKey(), tasks: [], notes: [], activeId: null,
     runningSince: null, microUntil: null, microDone: false,
     nudgeIdx: 0, overrunSeen: false, transitionUntil: null, quietUntil: null,
-    log: [],
+    log: [], updatedAt: 0,
     settings: { dayEnd:"17:30", multiplier:1.5, buffer:5, nudge:10, sound:true }
   };
 }
@@ -327,8 +335,9 @@ function storeFailed(){
 }
 
 function save(){
+  S.updatedAt = Date.now();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(function(){ writeStore(JSON.stringify(S)); }, 300);
+  saveTimer = setTimeout(function(){ writeStore(JSON.stringify(S)); syncPush(); }, 300);
 }
 
 function load(cb){
@@ -336,6 +345,95 @@ function load(cb){
     try { S = migrate(v ? JSON.parse(v) : null); } catch(e){ S = blank(); }
     cb();
   });
+}
+
+/* ---------- sync: pairing code ---------- */
+
+function getSyncCode(){
+  try { return window.localStorage.getItem(SYNC_KEY) || null; }
+  catch(e){ return null; }
+}
+function setSyncCode(c){
+  try { if(c) window.localStorage.setItem(SYNC_KEY, c); else window.localStorage.removeItem(SYNC_KEY); }
+  catch(e){}
+  syncCode = c;
+}
+
+// Crockford base32 (no I, L, O, U) so a misread character can't collide with another.
+function genSyncCode(){
+  var alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+  var bytes = new Uint8Array(10); // 80 bits: not guessable in any practical sense
+  (window.crypto || window.msCrypto).getRandomValues(bytes);
+  var bits = 0, val = 0, out = "";
+  for(var i = 0; i < bytes.length; i++){
+    val = (val << 8) | bytes[i]; bits += 8;
+    while(bits >= 5){ out += alphabet[(val >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  return out.match(/.{1,4}/g).join("-");
+}
+
+function syncCall(fn, body){
+  return fetch(SUPABASE_URL + "/rest/v1/rpc/" + fn, {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+function syncPush(){
+  if(!syncCode) return;
+  syncCall("hourglass_set", { p_code: syncCode, p_state: S }).catch(function(){
+    /* offline is fine; the next save retries */
+  });
+}
+
+function syncPull(onDone){
+  if(!syncCode){ if(onDone) onDone(false); return; }
+  syncCall("hourglass_get", { p_code: syncCode })
+    .then(function(r){ return r.ok ? r.json() : []; })
+    .then(function(rows){
+      var row = rows && rows[0];
+      if(!row || !row.state){ if(onDone) onDone(false); return; }
+      var remoteAt = Date.parse(row.updated_at) || 0;
+      if(remoteAt > (S.updatedAt || 0)){
+        S = migrate(row.state);
+        writeStore(JSON.stringify(S));
+        render();
+        if(onDone) onDone(true);
+      } else if(onDone) onDone(false);
+    })
+    .catch(function(){ if(onDone) onDone(false); });
+}
+
+function enableSync(){
+  setSyncCode(genSyncCode());
+  S.updatedAt = Date.now();
+  writeStore(JSON.stringify(S));
+  syncPush();
+  renderPlan();
+  toast("Sync on. Enter this code on your other device to link it.");
+}
+
+function linkSync(code){
+  code = (code || "").trim().toUpperCase();
+  if(!code){ toast("Enter a code first."); return; }
+  var prev = syncCode;
+  setSyncCode(code);
+  syncPull(function(found){
+    if(found){ toast("Linked. This device now matches the other."); }
+    else { setSyncCode(prev); toast("No data found for that code. Check it and try again."); }
+    renderPlan();
+  });
+}
+
+function disableSync(){
+  setSyncCode(null);
+  renderPlan();
+  toast("Sync off on this device. The shared copy is untouched.");
 }
 
 function exportState(){
@@ -745,7 +843,17 @@ function renderPlan(){
           ? '<span style="flex:none;color:var(--avail);font-weight:600;font-size:14px">On</span>'
           : '<button class="sbtn" id="s-notif">Allow</button>') + '</div>'
     + (installPrompt ? '<div class="set-row"><label>Install<small>Adds it to your home screen and runs it without browser chrome.</small></label><button class="sbtn" id="s-install">Install</button></div>' : '')
-    + '<div class="set-row"><label>Your data<small>Everything is stored on this device only. Nothing is sent anywhere.</small></label><button class="sbtn" id="s-export">Export</button></div>';
+    + (syncCode
+        ? '<div class="set-row"><label>Sync<small>On. Code: <code style="user-select:all">' + esc(syncCode) + '</code> &mdash; enter this on another device to link it.</small></label>'
+          + '<button class="sbtn" id="s-sync-copy">Copy</button> <button class="sbtn" id="s-sync-off">Turn off</button></div>'
+        : '<div class="set-row"><label>Sync<small>Off. Turn on to get a code for another device, or link one you already have.</small></label>'
+          + '<button class="sbtn" id="s-sync-on">Turn on</button></div>'
+          + '<div class="set-row"><label for="s-sync-in">Have a code?<small>Paste the code from your other device to link this one to it.</small></label>'
+          + '<input type="text" id="s-sync-in" placeholder="XXXX-XXXX-XXXX-XXXX" style="text-transform:uppercase" autocomplete="off">'
+          + '<button class="sbtn" id="s-sync-link">Link</button></div>')
+    + '<div class="set-row"><label>Your data<small>' + (syncCode
+        ? "Also held on the sync backend under your code, so your other device can reach it. Nothing else can read it without that code."
+        : "Stored on this device only. Nothing is sent anywhere.") + '</small></label><button class="sbtn" id="s-export">Export</button></div>';
 }
 
 /* ---------- render: REVIEW ---------- */
@@ -951,6 +1059,18 @@ document.addEventListener("click", function(e){
   }
   if(el.id === "s-notif") return askNotify();
   if(el.id === "s-export") return exportState();
+  if(el.id === "s-sync-on") return enableSync();
+  if(el.id === "s-sync-off") return disableSync();
+  if(el.id === "s-sync-link"){
+    var si = document.getElementById("s-sync-in");
+    return linkSync(si ? si.value : "");
+  }
+  if(el.id === "s-sync-copy"){
+    if(syncCode && navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(syncCode).then(function(){ toast("Code copied."); }).catch(function(){});
+    }
+    return;
+  }
   if(el.id === "s-install"){
     if(!installPrompt) return;
     installPrompt.prompt();
@@ -998,6 +1118,7 @@ document.addEventListener("visibilitychange", function(){
     keepAwake(true);
     if(away >= 2) toast("You were away " + hm(away) + ". The timer kept running.");
   }
+  if(syncCode) syncPull();
   render();
 });
 
@@ -1016,12 +1137,14 @@ if("serviceWorker" in navigator){
 }
 
 load(function(){
+  syncCode = getSyncCode();
   if(running() && Date.now() - S.runningSince > 4*3600*1000){
     S.runningSince = null; S.microUntil = null;
     toast("A timer was still running from a while back. Stopped it rather than guess.");
   }
   render();
   if(running()) keepAwake(true);
+  if(syncCode) syncPull();
   setInterval(tick, 500);
 });
 
