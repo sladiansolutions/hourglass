@@ -180,7 +180,7 @@
 
 <header class="gauge">
   <div class="gauge-row">
-    <div class="gauge-left"><b id="g-left">&mdash;</b> left today</div>
+    <div class="gauge-left"><b id="g-left">&mdash;</b> <span id="g-label">left today</span></div>
     <div class="gauge-right" id="g-right"></div>
   </div>
   <div class="bar"><div class="bar-fill" id="g-fill" style="width:0%"></div></div>
@@ -200,14 +200,15 @@
   </section>
 
   <section class="view" id="view-plan">
-    <h2>Add something to today</h2>
+    <h2 id="plan-add-heading">Add something to today</h2>
+    <div id="mode-row"></div>
     <div class="cap-row">
       <input type="text" id="t-name" placeholder="What is the thing?" autocomplete="off">
       <button id="t-add">Add</button>
     </div>
     <div class="chips" id="t-chips"></div>
 
-    <h2>Today's list</h2>
+    <h2 id="plan-list-heading">Today's list</h2>
     <div id="tasklist"></div>
     <div class="capacity" id="capacity"></div>
 
@@ -253,6 +254,7 @@ var SYNC_KEY = "hourglass:synccode:v1";
 var syncCode = null;
 var openDetail = null;   // task id whose editor is expanded
 var askStuck = false;    // "what is the first step" prompt showing on Now
+var forceToday = false;  // session-only escape hatch out of planning mode
 var S = null, saveTimer = null, toastT = null, actx = null;
 
 /* ---------- state ---------- */
@@ -260,6 +262,7 @@ var S = null, saveTimer = null, toastT = null, actx = null;
 function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function uid(){ return Math.random().toString(36).slice(2,9); }
 function todayKey(){ var d = new Date(); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+function tomorrowKey(){ var d = new Date(); d.setDate(d.getDate()+1); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
 
 function blank(){
   return {
@@ -267,13 +270,13 @@ function blank(){
     runningSince: null, microUntil: null, microDone: false,
     nudgeIdx: 0, overrunSeen: false, transitionUntil: null, quietUntil: null,
     log: [], updatedAt: 0,
-    settings: { dayEnd:"17:30", multiplier:1.5, buffer:5, nudge:10, sound:true }
+    settings: { dayStart:"09:00", dayEnd:"17:30", multiplier:1.5, buffer:5, nudge:10, sound:true }
   };
 }
 
 function newTask(title, est){
   return { id:uid(), title:title, est:est, spent:0, status:"todo",
-           first:"", must:false, due:"", starts:0, defers:0 };
+           first:"", must:false, due:"", starts:0, defers:0, forDay:todayKey() };
 }
 
 function migrate(s){
@@ -290,18 +293,25 @@ function migrate(s){
   return s;
 }
 
-// New day. Unfinished work survives, and surviving counts as being deferred once.
+// New day. Unfinished work survives. A task already stamped for the day we are
+// rolling into was planned, not deferred, so only genuinely stale tasks count.
 function rollDay(s){
+  var newDay = todayKey();
   s.tasks.forEach(function(t){
     if(t.spent > 60) s.log.unshift({ date:s.day, title:t.title, est:t.est, actual:Math.round(t.spent/60), done:t.status==="done" });
   });
   s.log = s.log.slice(0, 60);
-  s.day = todayKey();
+  s.day = newDay;
   s.runningSince = null; s.microUntil = null; s.microDone = false;
   s.nudgeIdx = 0; s.overrunSeen = false; s.transitionUntil = null; s.quietUntil = null;
   s.tasks = s.tasks.filter(function(t){ return t.status !== "done"; });
-  s.tasks.forEach(function(t){ t.spent = 0; t.status = "todo"; t.defers = (t.defers||0) + 1; });
+  s.tasks.forEach(function(t){
+    t.spent = 0; t.status = "todo";
+    if((t.forDay || newDay) < newDay) t.defers = (t.defers||0) + 1;
+    t.forDay = newDay;
+  });
   if(!s.tasks.some(function(t){ return t.id === s.activeId; })) s.activeId = s.tasks.length ? s.tasks[0].id : null;
+  forceToday = false;
 }
 
 /* Storage adapter. Prefers the host API when one exists, otherwise localStorage.
@@ -450,7 +460,8 @@ function exportState(){
 function byId(id){ for(var i=0;i<S.tasks.length;i++) if(S.tasks[i].id === id) return S.tasks[i]; return null; }
 function active(){ return S.activeId ? byId(S.activeId) : null; }
 function running(){ return S.runningSince != null; }
-function todos(){ return S.tasks.filter(function(t){ return t.status === "todo"; }); }
+function todosFor(day){ return S.tasks.filter(function(t){ return t.status === "todo" && (t.forDay || todayKey()) === day; }); }
+function todos(){ return todosFor(todayKey()); }
 function quiet(){ return S.quietUntil && Date.now() < S.quietUntil; }
 
 function liveSpent(t){
@@ -465,14 +476,30 @@ function dayEndMs(){
   return d.getTime();
 }
 function minsLeftToday(){ return Math.max(0, (dayEndMs() - Date.now())/60000); }
+
+// Past today's day-end, with no timer running, means the day's work is over
+// and anything added is for tomorrow instead -- unless the escape hatch is on.
+function pastDayEnd(){ return Date.now() >= dayEndMs(); }
+function planningMode(){ return pastDayEnd() && !running() && !forceToday; }
+function planDay(){ return planningMode() ? tomorrowKey() : todayKey(); }
+
+// The window being planned against: the rest of today, or tomorrow's full day.
+function windowMins(){
+  if(!planningMode()) return minsLeftToday();
+  var s = (S.settings.dayStart || "09:00").split(":"), e = (S.settings.dayEnd || "17:30").split(":");
+  var startMin = (parseInt(s[0],10)||0)*60 + (parseInt(s[1],10)||0);
+  var endMin = (parseInt(e[0],10)||0)*60 + (parseInt(e[1],10)||0);
+  return Math.max(0, endMin - startMin);
+}
+
 function cost(t){ return t.est * S.settings.multiplier + S.settings.buffer; }
-function plannedMins(){ var n = 0; todos().forEach(function(t){ n += cost(t); }); return n; }
-function rawMins(){ var n = 0; todos().forEach(function(t){ n += t.est; }); return n; }
+function plannedMins(){ var n = 0; todosFor(planDay()).forEach(function(t){ n += cost(t); }); return n; }
+function rawMins(){ var n = 0; todosFor(planDay()).forEach(function(t){ n += t.est; }); return n; }
 
 // Which items are the overflow, musts protected first.
 function overflow(){
-  var left = minsLeftToday(), acc = 0, out = [];
-  todos().slice().sort(function(a,b){ return (b.must?1:0) - (a.must?1:0); }).forEach(function(t){
+  var left = windowMins(), acc = 0, out = [];
+  todosFor(planDay()).slice().sort(function(a,b){ return (b.must?1:0) - (a.must?1:0); }).forEach(function(t){
     acc += cost(t);
     if(acc > left) out.push(t);
   });
@@ -628,8 +655,9 @@ function addTask(title, est){
   title = (title || "").trim();
   if(!title) return null;
   var t = newTask(title, est);
+  if(planningMode()) t.forDay = tomorrowKey();
   S.tasks.push(t);
-  if(!active()) S.activeId = t.id;
+  if(t.forDay === todayKey() && !active()) S.activeId = t.id;
   save(); render();
   return t;
 }
@@ -653,8 +681,46 @@ function removeTask(id){
 
 /* ---------- render: NOW ---------- */
 
+// Past day-end, nothing running: the day's work is over. Show what tomorrow
+// already has decided rather than offering a start button.
+function renderPlanningClose(){
+  var box = document.getElementById("now-body");
+  var list = todosFor(tomorrowKey());
+  var planned = 0; list.forEach(function(t){ planned += cost(t); });
+  var missing = list.filter(function(t){ return !t.first; });
+
+  var html = '<p class="task-sub">Tomorrow</p>';
+
+  if(!list.length){
+    html += '<h1 class="task-title">Nothing planned yet</h1>'
+         + '<p class="task-sub">Add something on the Plan tab before you close out.</p>'
+         + '<button class="start" data-go="plan" style="max-width:280px;margin:14px auto 0">Open the plan</button>';
+  } else {
+    var first = list[0];
+    html += '<h1 class="task-title">' + esc(first.title) + '</h1>';
+    html += first.first
+      ? '<div class="firstact"><span>Starts with</span><p>' + esc(first.first) + '</p></div>'
+      : '<div class="firstact" style="border-left-color:var(--line)"><span>No first step written</span>'
+        + '<p style="font-weight:500;color:var(--muted);font-size:15px">The morning is not decided yet.</p>'
+        + '<button data-go="plan" data-openfor="' + first.id + '">Write the first step</button></div>';
+
+    if(missing.length){
+      html += '<p class="hint"><button class="linkbtn" data-go="plan" data-openfor="' + missing[0].id + '">'
+        + missing.length + ' of ' + list.length + ' have no first step yet</button>. '
+        + 'A planned list with no first steps has not actually solved anything.</p>';
+    }
+
+    html += '<p class="hint">' + hm(planned) + ' planned against ' + hm(windowMins()) + ' of tomorrow’s window.</p>';
+  }
+
+  html += '<p class="hint" style="margin-top:22px">Planning is done for tonight. Nothing here starts now.</p>';
+  box.innerHTML = html;
+  document.getElementById("upnext").innerHTML = "";
+}
+
 function renderNow(){
   if(typingIn("#now-body")) return;
+  if(planningMode()) return renderPlanningClose();
   var box = document.getElementById("now-body");
   var t = active();
 
@@ -769,13 +835,25 @@ function renderChips(){
 
 function renderPlan(){
   if(typingIn("#tasklist")) return;
+
+  var planning = planningMode(), day = planDay();
+  document.getElementById("plan-add-heading").textContent = planning ? "Add something to tomorrow" : "Add something to today";
+  document.getElementById("plan-list-heading").textContent = planning ? "Tomorrow's list" : "Today's list";
+
+  var mr = document.getElementById("mode-row");
+  mr.innerHTML = pastDayEnd()
+    ? '<div class="set-row"><label>Still working today<small>Keep adding to today’s list instead of tomorrow’s, for the rest of this visit.</small></label>'
+      + '<button class="toggle" id="s-forcetoday" aria-pressed="' + forceToday + '" aria-label="Still working today"></button></div>'
+    : '';
+
   var list = document.getElementById("tasklist");
+  var dayTasks = S.tasks.filter(function(t){ return (t.forDay || todayKey()) === day; });
   var over = overflow().map(function(t){ return t.id; });
 
-  if(!S.tasks.length){
+  if(!dayTasks.length){
     list.innerHTML = '<p class="hint">Empty. Three things is a real day. Ten things is a wish.</p>';
   } else {
-    list.innerHTML = S.tasks.map(function(t){
+    list.innerHTML = dayTasks.map(function(t){
       var d = daysTo(t.due), meta = [];
       if(t.first) meta.push('<b>First:</b> ' + esc(t.first));
       else meta.push('<span style="color:var(--avail);font-weight:600">no first step yet</span>');
@@ -807,13 +885,13 @@ function renderPlan(){
     }).join("");
   }
 
-  var planned = plannedMins(), left = minsLeftToday(), of = overflow();
+  var planned = plannedMins(), left = windowMins(), of = overflow();
   var cap = document.getElementById("capacity");
   cap.className = "capacity" + (of.length ? " over" : "");
-  if(!todos().length){
-    cap.innerHTML = '<p>' + hm(left) + ' of working day left, nothing claimed.</p>';
+  if(!todosFor(day).length){
+    cap.innerHTML = '<p>' + hm(left) + (planning ? " of tomorrow's day, nothing claimed." : " of working day left, nothing claimed.") + '</p>';
   } else {
-    cap.innerHTML = '<p>' + todos().length + ' things, ' + hm(planned) + ' of real time. You have ' + hm(left) + '.</p>'
+    cap.innerHTML = '<p>' + todosFor(day).length + ' things, ' + hm(planned) + ' of real time. You have ' + hm(left) + '.</p>'
       + '<p>Raw guesses total ' + hm(rawMins()) + ', stretched ' + S.settings.multiplier
       + '&times; plus ' + S.settings.buffer + 'm switching cost each.</p>'
       + (of.length
@@ -833,7 +911,8 @@ function renderPlan(){
 
   var st = S.settings;
   document.getElementById("settings").innerHTML =
-      '<div class="set-row"><label for="s-end">Day ends at<small>Everything above counts down to this.</small></label><input type="time" id="s-end" value="' + st.dayEnd + '"></div>'
+      '<div class="set-row"><label for="s-start">Day starts at<small>Used to size the window when you plan tomorrow tonight.</small></label><input type="time" id="s-start" value="' + st.dayStart + '"></div>'
+    + '<div class="set-row"><label for="s-end">Day ends at<small>Everything above counts down to this.</small></label><input type="time" id="s-end" value="' + st.dayEnd + '"></div>'
     + '<div class="set-row"><label for="s-mult">Reality multiplier<small>Your guesses get multiplied by this before they touch the day.</small></label><input type="number" id="s-mult" min="1" max="4" step="0.1" value="' + st.multiplier + '"></div>'
     + '<div class="set-row"><label for="s-buf">Switching cost<small>Minutes added per task, because getting into the next thing is not free.</small></label><input type="number" id="s-buf" min="0" max="30" step="1" value="' + st.buffer + '"></div>'
     + '<div class="set-row"><label for="s-nud">Nudge every<small>Minutes between check-ins while a task runs.</small></label><input type="number" id="s-nud" min="2" max="60" step="1" value="' + st.nudge + '"></div>'
@@ -923,10 +1002,12 @@ function renderReview(){
 /* ---------- gauge and loop ---------- */
 
 function renderGauge(){
-  var left = minsLeftToday(), planned = plannedMins();
+  var left = windowMins(), planned = plannedMins();
   document.getElementById("g-left").textContent = hm(left);
+  var lbl = document.getElementById("g-label");
+  if(lbl) lbl.textContent = planningMode() ? "for tomorrow" : "left today";
   var r = document.getElementById("g-right"), f = document.getElementById("g-fill");
-  if(!todos().length){
+  if(!todosFor(planDay()).length){
     r.className = "gauge-right"; r.textContent = "nothing claimed";
     f.className = "bar-fill"; f.style.width = "0%"; return;
   }
@@ -937,8 +1018,12 @@ function renderGauge(){
   f.style.width = Math.min(100, left > 0 ? planned/left*100 : 100).toFixed(1) + "%";
 }
 
+var wasPlanning = null;
+
 function tick(){
   if(S.day !== todayKey()){ rollDay(S); save(); render(); return; }
+  var pm = planningMode();
+  if(pm !== wasPlanning){ wasPlanning = pm; renderNow(); renderPlan(); }
   renderGauge();
 
   var t = active();
@@ -999,7 +1084,16 @@ document.addEventListener("click", function(e){
   var d = el.dataset, t;
 
   if(d.v) return show(d.v);
-  if(d.go) return show(d.go);
+  if(d.go){
+    show(d.go);
+    if(d.openfor){
+      openDetail = d.openfor;
+      renderPlan();
+      var fi = document.getElementById("f-" + d.openfor);
+      if(fi) fi.focus();
+    }
+    return;
+  }
 
   if(d.act){
     t = active();
@@ -1057,6 +1151,7 @@ document.addEventListener("click", function(e){
     }
     return;
   }
+  if(el.id === "s-forcetoday"){ forceToday = !forceToday; render(); return; }
   if(el.id === "s-notif") return askNotify();
   if(el.id === "s-export") return exportState();
   if(el.id === "s-sync-on") return enableSync();
@@ -1100,7 +1195,8 @@ document.addEventListener("change", function(e){
   var d = e.target.dataset || {}, t, id = e.target.id;
   if(d.first){ t = byId(d.first); if(t){ t.first = e.target.value.trim(); save(); renderNow(); } return; }
   if(d.due){ t = byId(d.due); if(t){ t.due = e.target.value; save(); renderNow(); } return; }
-  if(id === "s-end") S.settings.dayEnd = e.target.value || "17:30";
+  if(id === "s-start") S.settings.dayStart = e.target.value || "09:00";
+  else if(id === "s-end") S.settings.dayEnd = e.target.value || "17:30";
   else if(id === "s-mult") S.settings.multiplier = Math.max(1, Math.min(4, +e.target.value || 1.5));
   else if(id === "s-buf") S.settings.buffer = Math.max(0, Math.min(30, +e.target.value || 0));
   else if(id === "s-nud") S.settings.nudge = Math.max(2, Math.min(60, +e.target.value || 10));
