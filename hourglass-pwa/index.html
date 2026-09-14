@@ -286,6 +286,55 @@ function distinctGroups(list){
   return out;
 }
 
+// The cluster order for a day's tasks, read off the array's actual current
+// order (empty group included as a value like any other). This has to be
+// derived from real position, not a fixed "ungrouped last" rule, or a
+// cross-group move would look like it worked and then silently undo itself
+// the next time anything re-rendered. Keeping the array itself tidy is
+// assignGroup()'s job, not this function's.
+function clusterOrder(day){
+  var dayTasks = S.tasks.filter(function(t){ return (t.forDay || todayKey()) === day; });
+  var out = [];
+  dayTasks.forEach(function(t){ if(out.indexOf(t.group) < 0) out.push(t.group); });
+  return out;
+}
+
+// Lays out a day's tasks per a given cluster order, each cluster keeping its
+// own internal relative order.
+function orderedDay(day, order){
+  var dayTasks = S.tasks.filter(function(t){ return (t.forDay || todayKey()) === day; });
+  var out = [];
+  order.forEach(function(g){ dayTasks.forEach(function(t){ if(t.group === g) out.push(t); }); });
+  return out;
+}
+
+// Sets a task's group and relocates it in the flat array to match: joins the
+// end of its new group's existing span, or -- for a brand-new label -- takes
+// the default "ungrouped last" position by slotting in right before this
+// day's first ungrouped task. Only this one task moves; every other cluster's
+// established order (including anything moveCluster() has already done) is
+// left exactly as it was.
+function assignGroup(t, newGroup){
+  newGroup = (newGroup || "").slice(0,24);
+  if(t.group === newGroup) return;
+  var idx = S.tasks.indexOf(t);
+  if(idx < 0) return; // must already be a real member of S.tasks, or splice(-1) below would corrupt the array
+  var day = t.forDay || todayKey();
+  t.group = newGroup;
+  S.tasks.splice(idx, 1);
+
+  var peers = S.tasks.filter(function(x){ return (x.forDay || todayKey()) === day && x.group === newGroup; });
+  if(peers.length){
+    S.tasks.splice(S.tasks.indexOf(peers[peers.length - 1]) + 1, 0, t);
+    return;
+  }
+  if(newGroup !== ""){
+    var ungrouped = S.tasks.filter(function(x){ return (x.forDay || todayKey()) === day && x.group === ""; });
+    if(ungrouped.length){ S.tasks.splice(S.tasks.indexOf(ungrouped[0]), 0, t); return; }
+  }
+  S.tasks.push(t);
+}
+
 function migrate(s){
   var b = blank(), k;
   if(!s || typeof s !== "object") return b;
@@ -671,15 +720,33 @@ function addTask(title, est){
 
 // Moves within the task's own day and group, so grouped display order and
 // manual reordering agree with each other even though storage stays flat.
+// At the edge of a group, the same arrow instead carries the whole group
+// past its neighboring cluster -- one pair of buttons, two things they can move.
 function move(id, dir){
   var t = byId(id); if(!t) return;
-  var peers = S.tasks.filter(function(x){
-    return (x.forDay || todayKey()) === (t.forDay || todayKey()) && x.group === t.group;
-  });
+  var day = t.forDay || todayKey();
+  var peers = S.tasks.filter(function(x){ return (x.forDay || todayKey()) === day && x.group === t.group; });
   var i = peers.indexOf(t), j = i + dir;
-  if(i < 0 || j < 0 || j >= peers.length) return;
-  var gi = S.tasks.indexOf(t), gj = S.tasks.indexOf(peers[j]);
-  var tmp = S.tasks[gi]; S.tasks[gi] = S.tasks[gj]; S.tasks[gj] = tmp;
+  if(i >= 0 && j >= 0 && j < peers.length){
+    var gi = S.tasks.indexOf(t), gj = S.tasks.indexOf(peers[j]);
+    var tmp = S.tasks[gi]; S.tasks[gi] = S.tasks[gj]; S.tasks[gj] = tmp;
+    save(); render();
+    return;
+  }
+  moveCluster(t.group, day, dir);
+}
+
+function moveCluster(group, day, dir){
+  var order = clusterOrder(day);
+  var ci = order.indexOf(group), cj = ci + dir;
+  if(ci < 0 || cj < 0 || cj >= order.length) return;
+  var swapped = order.slice();
+  var tmp = swapped[ci]; swapped[ci] = swapped[cj]; swapped[cj] = tmp;
+
+  var rebuilt = orderedDay(day, swapped), ri = 0;
+  S.tasks = S.tasks.map(function(t){
+    return (t.forDay || todayKey()) === day ? rebuilt[ri++] : t;
+  });
   save(); render();
 }
 
@@ -864,13 +931,9 @@ function renderPlan(){
   var over = overflow().map(function(t){ return t.id; });
   var groupsInUse = distinctGroups(dayTasks);
 
-  // Cluster by group, in first-appearance order; ungrouped tasks last. Relative
-  // order within a cluster is preserved, matching what move() operates on.
-  var grouped = [];
-  groupsInUse.forEach(function(g){
-    dayTasks.forEach(function(t){ if(t.group === g) grouped.push(t); });
-  });
-  dayTasks.forEach(function(t){ if(!t.group) grouped.push(t); });
+  // Same cluster order move()/moveCluster() operate on, so what you see matches
+  // what the arrows act on.
+  var grouped = orderedDay(day, clusterOrder(day));
 
   if(!dayTasks.length){
     list.innerHTML = '<p class="hint">Empty. Three things is a real day. Ten things is a wish.</p>';
@@ -1172,7 +1235,7 @@ document.addEventListener("click", function(e){
     return;
   }
   if(d.noteDel){ S.notes = S.notes.filter(function(x){ return x.id !== d.noteDel; }); save(); render(); return; }
-  if(d.groupfor){ t = byId(d.groupfor); if(t){ t.group = (d.groupval || "").slice(0,24); save(); renderPlan(); } return; }
+  if(d.groupfor){ t = byId(d.groupfor); if(t){ assignGroup(t, d.groupval); save(); renderPlan(); } return; }
   if(d.cal){ S.settings.multiplier = +d.cal; save(); render(); toast("Multiplier set to " + d.cal + "x."); return; }
 
   if(el.id === "t-add"){
@@ -1235,7 +1298,7 @@ document.addEventListener("change", function(e){
   var d = e.target.dataset || {}, t, id = e.target.id;
   if(d.first){ t = byId(d.first); if(t){ t.first = e.target.value.trim(); save(); renderNow(); } return; }
   if(d.due){ t = byId(d.due); if(t){ t.due = e.target.value; save(); renderNow(); } return; }
-  if(d.group){ t = byId(d.group); if(t){ t.group = e.target.value.trim().slice(0,24); save(); renderPlan(); } return; }
+  if(d.group){ t = byId(d.group); if(t){ assignGroup(t, e.target.value.trim()); save(); renderPlan(); } return; }
   if(id === "s-start") S.settings.dayStart = e.target.value || "09:00";
   else if(id === "s-end") S.settings.dayEnd = e.target.value || "17:30";
   else if(id === "s-mult") S.settings.multiplier = Math.max(1, Math.min(4, +e.target.value || 1.5));
