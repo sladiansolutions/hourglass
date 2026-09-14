@@ -276,7 +276,14 @@ function blank(){
 
 function newTask(title, est){
   return { id:uid(), title:title, est:est, spent:0, status:"todo",
-           first:"", must:false, due:"", starts:0, defers:0, forDay:todayKey() };
+           first:"", must:false, due:"", starts:0, defers:0, forDay:todayKey(), group:"" };
+}
+
+// Groups a list is currently using, in first-appearance order, empty ones excluded.
+function distinctGroups(list){
+  var out = [];
+  list.forEach(function(t){ if(t.group && out.indexOf(t.group) < 0) out.push(t.group); });
+  return out;
 }
 
 function migrate(s){
@@ -662,12 +669,17 @@ function addTask(title, est){
   return t;
 }
 
+// Moves within the task's own day and group, so grouped display order and
+// manual reordering agree with each other even though storage stays flat.
 function move(id, dir){
-  var i = -1, j;
-  for(var k=0;k<S.tasks.length;k++) if(S.tasks[k].id === id) i = k;
-  j = i + dir;
-  if(i < 0 || j < 0 || j >= S.tasks.length) return;
-  var tmp = S.tasks[i]; S.tasks[i] = S.tasks[j]; S.tasks[j] = tmp;
+  var t = byId(id); if(!t) return;
+  var peers = S.tasks.filter(function(x){
+    return (x.forDay || todayKey()) === (t.forDay || todayKey()) && x.group === t.group;
+  });
+  var i = peers.indexOf(t), j = i + dir;
+  if(i < 0 || j < 0 || j >= peers.length) return;
+  var gi = S.tasks.indexOf(t), gj = S.tasks.indexOf(peers[j]);
+  var tmp = S.tasks[gi]; S.tasks[gi] = S.tasks[gj]; S.tasks[gj] = tmp;
   save(); render();
 }
 
@@ -743,7 +755,8 @@ function renderNow(){
   }
 
   var d = daysTo(t.due);
-  html += '<p class="task-sub">' + (running() ? "Running" : "Up next") + '</p>'
+  html += (t.group ? '<p class="task-sub">' + esc(t.group) + '</p>' : '')
+       + '<p class="task-sub">' + (running() ? "Running" : "Up next") + '</p>'
        + '<h1 class="task-title">' + esc(t.title) + '</h1>'
        + '<p class="task-sub' + (d !== null && d <= 1 ? " due" : "") + '">You said ' + t.est + ' minutes'
        + (d !== null ? ' &middot; ' + runway(d) : '')
@@ -849,12 +862,22 @@ function renderPlan(){
   var list = document.getElementById("tasklist");
   var dayTasks = S.tasks.filter(function(t){ return (t.forDay || todayKey()) === day; });
   var over = overflow().map(function(t){ return t.id; });
+  var groupsInUse = distinctGroups(dayTasks);
+
+  // Cluster by group, in first-appearance order; ungrouped tasks last. Relative
+  // order within a cluster is preserved, matching what move() operates on.
+  var grouped = [];
+  groupsInUse.forEach(function(g){
+    dayTasks.forEach(function(t){ if(t.group === g) grouped.push(t); });
+  });
+  dayTasks.forEach(function(t){ if(!t.group) grouped.push(t); });
 
   if(!dayTasks.length){
     list.innerHTML = '<p class="hint">Empty. Three things is a real day. Ten things is a wish.</p>';
   } else {
-    list.innerHTML = dayTasks.map(function(t){
+    list.innerHTML = grouped.map(function(t){
       var d = daysTo(t.due), meta = [];
+      if(t.group) meta.push(esc(t.group));
       if(t.first) meta.push('<b>First:</b> ' + esc(t.first));
       else meta.push('<span style="color:var(--avail);font-weight:600">no first step yet</span>');
       if(d !== null) meta.push('<span class="' + (d <= 1 ? "warn" : "") + '">' + runway(d) + '</span>');
@@ -875,6 +898,13 @@ function renderPlan(){
         + '<div class="meta">' + meta.join("") + '</div>'
         + (openDetail === t.id
             ? '<div class="detail">'
+              + '<label for="g-' + t.id + '">Group, if this belongs with other tasks</label>'
+              + '<input type="text" id="g-' + t.id + '" data-group="' + t.id + '" value="' + esc(t.group) + '" maxlength="24" placeholder="e.g. Report">'
+              + (groupsInUse.length
+                  ? '<div class="chips">' + groupsInUse.map(function(g){
+                      return '<button class="chip" data-groupfor="' + t.id + '" data-groupval="' + esc(g) + '" aria-pressed="' + (t.group === g) + '">' + esc(g) + '</button>';
+                    }).join("") + '</div>'
+                  : '')
               + '<label for="f-' + t.id + '">First physical action. Write it now, while you can think.</label>'
               + '<input type="text" id="f-' + t.id + '" data-first="' + t.id + '" value="' + esc(t.first) + '" placeholder="e.g. open the workbook, go to the Q3 tab">'
               + '<label for="d-' + t.id + '">Due date, if it has one</label>'
@@ -891,9 +921,18 @@ function renderPlan(){
   if(!todosFor(day).length){
     cap.innerHTML = '<p>' + hm(left) + (planning ? " of tomorrow's day, nothing claimed." : " of working day left, nothing claimed.") + '</p>';
   } else {
+    var groupTotals = {}, groupOrder = [];
+    todosFor(day).forEach(function(t){
+      if(!t.group) return;
+      if(groupOrder.indexOf(t.group) < 0){ groupOrder.push(t.group); groupTotals[t.group] = 0; }
+      groupTotals[t.group] += cost(t);
+    });
     cap.innerHTML = '<p>' + todosFor(day).length + ' things, ' + hm(planned) + ' of real time. You have ' + hm(left) + '.</p>'
       + '<p>Raw guesses total ' + hm(rawMins()) + ', stretched ' + S.settings.multiplier
       + '&times; plus ' + S.settings.buffer + 'm switching cost each.</p>'
+      + (groupOrder.length > 1
+          ? '<p>' + groupOrder.map(function(g){ return esc(g) + ': ' + hm(groupTotals[g]); }).join(' &middot; ') + '</p>'
+          : '')
       + (of.length
           ? '<p>These are past the edge of the day. Move them now or they move themselves:</p><ul>'
             + of.map(function(t){ return '<li>' + esc(t.title) + '</li>'; }).join("") + '</ul>'
@@ -1133,6 +1172,7 @@ document.addEventListener("click", function(e){
     return;
   }
   if(d.noteDel){ S.notes = S.notes.filter(function(x){ return x.id !== d.noteDel; }); save(); render(); return; }
+  if(d.groupfor){ t = byId(d.groupfor); if(t){ t.group = (d.groupval || "").slice(0,24); save(); renderPlan(); } return; }
   if(d.cal){ S.settings.multiplier = +d.cal; save(); render(); toast("Multiplier set to " + d.cal + "x."); return; }
 
   if(el.id === "t-add"){
@@ -1195,6 +1235,7 @@ document.addEventListener("change", function(e){
   var d = e.target.dataset || {}, t, id = e.target.id;
   if(d.first){ t = byId(d.first); if(t){ t.first = e.target.value.trim(); save(); renderNow(); } return; }
   if(d.due){ t = byId(d.due); if(t){ t.due = e.target.value; save(); renderNow(); } return; }
+  if(d.group){ t = byId(d.group); if(t){ t.group = e.target.value.trim().slice(0,24); save(); renderPlan(); } return; }
   if(id === "s-start") S.settings.dayStart = e.target.value || "09:00";
   else if(id === "s-end") S.settings.dayEnd = e.target.value || "17:30";
   else if(id === "s-mult") S.settings.multiplier = Math.max(1, Math.min(4, +e.target.value || 1.5));
