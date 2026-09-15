@@ -286,6 +286,18 @@ function distinctGroups(list){
   return out;
 }
 
+// Whether a task belongs to a given day bucket, for display/clustering and
+// for move()/moveCluster()'s reordering. Same bucketing as dayBucket(), with
+// one more rule: today's already-finished tasks don't belong in tomorrow's
+// bucket even though dayBucket() merges the two days during planning mode --
+// a done task tonight will not exist on tomorrow's list once the real roll
+// happens, so it must not be shown, counted, or moved as if it will.
+function inBucket(t, day){
+  if(dayBucket(t.forDay || todayKey()) !== day) return false;
+  if(planningMode() && day === tomorrowKey() && (t.forDay || todayKey()) === todayKey() && t.status === "done") return false;
+  return true;
+}
+
 // The cluster order for a day's tasks, read off the array's actual current
 // order (empty group included as a value like any other). This has to be
 // derived from real position, not a fixed "ungrouped last" rule, or a
@@ -293,7 +305,7 @@ function distinctGroups(list){
 // the next time anything re-rendered. Keeping the array itself tidy is
 // assignGroup()'s job, not this function's.
 function clusterOrder(day){
-  var dayTasks = S.tasks.filter(function(t){ return dayBucket(t.forDay || todayKey()) === day; });
+  var dayTasks = S.tasks.filter(function(t){ return inBucket(t, day); });
   var out = [];
   dayTasks.forEach(function(t){ if(out.indexOf(t.group) < 0) out.push(t.group); });
   return out;
@@ -302,7 +314,7 @@ function clusterOrder(day){
 // Lays out a day's tasks per a given cluster order, each cluster keeping its
 // own internal relative order.
 function orderedDay(day, order){
-  var dayTasks = S.tasks.filter(function(t){ return dayBucket(t.forDay || todayKey()) === day; });
+  var dayTasks = S.tasks.filter(function(t){ return inBucket(t, day); });
   var out = [];
   order.forEach(function(g){ dayTasks.forEach(function(t){ if(t.group === g) out.push(t); }); });
   return out;
@@ -323,13 +335,13 @@ function assignGroup(t, newGroup){
   t.group = newGroup;
   S.tasks.splice(idx, 1);
 
-  var peers = S.tasks.filter(function(x){ return dayBucket(x.forDay || todayKey()) === day && x.group === newGroup; });
+  var peers = S.tasks.filter(function(x){ return inBucket(x, day) && x.group === newGroup; });
   if(peers.length){
     S.tasks.splice(S.tasks.indexOf(peers[peers.length - 1]) + 1, 0, t);
     return;
   }
   if(newGroup !== ""){
-    var ungrouped = S.tasks.filter(function(x){ return dayBucket(x.forDay || todayKey()) === day && x.group === ""; });
+    var ungrouped = S.tasks.filter(function(x){ return inBucket(x, day) && x.group === ""; });
     if(ungrouped.length){ S.tasks.splice(S.tasks.indexOf(ungrouped[0]), 0, t); return; }
   }
   S.tasks.push(t);
@@ -746,7 +758,7 @@ function addTask(title, est){
 function move(id, dir){
   var t = byId(id); if(!t) return;
   var day = dayBucket(t.forDay || todayKey());
-  var peers = S.tasks.filter(function(x){ return dayBucket(x.forDay || todayKey()) === day && x.group === t.group; });
+  var peers = S.tasks.filter(function(x){ return inBucket(x, day) && x.group === t.group; });
   var i = peers.indexOf(t), j = i + dir;
   if(i >= 0 && j >= 0 && j < peers.length){
     var gi = S.tasks.indexOf(t), gj = S.tasks.indexOf(peers[j]);
@@ -766,7 +778,7 @@ function moveCluster(group, day, dir){
 
   var rebuilt = orderedDay(day, swapped), ri = 0;
   S.tasks = S.tasks.map(function(t){
-    return dayBucket(t.forDay || todayKey()) === day ? rebuilt[ri++] : t;
+    return inBucket(t, day) ? rebuilt[ri++] : t;
   });
   save(); render();
 }
