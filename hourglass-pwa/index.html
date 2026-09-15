@@ -293,7 +293,7 @@ function distinctGroups(list){
 // the next time anything re-rendered. Keeping the array itself tidy is
 // assignGroup()'s job, not this function's.
 function clusterOrder(day){
-  var dayTasks = S.tasks.filter(function(t){ return (t.forDay || todayKey()) === day; });
+  var dayTasks = S.tasks.filter(function(t){ return dayBucket(t.forDay || todayKey()) === day; });
   var out = [];
   dayTasks.forEach(function(t){ if(out.indexOf(t.group) < 0) out.push(t.group); });
   return out;
@@ -302,7 +302,7 @@ function clusterOrder(day){
 // Lays out a day's tasks per a given cluster order, each cluster keeping its
 // own internal relative order.
 function orderedDay(day, order){
-  var dayTasks = S.tasks.filter(function(t){ return (t.forDay || todayKey()) === day; });
+  var dayTasks = S.tasks.filter(function(t){ return dayBucket(t.forDay || todayKey()) === day; });
   var out = [];
   order.forEach(function(g){ dayTasks.forEach(function(t){ if(t.group === g) out.push(t); }); });
   return out;
@@ -319,17 +319,17 @@ function assignGroup(t, newGroup){
   if(t.group === newGroup) return;
   var idx = S.tasks.indexOf(t);
   if(idx < 0) return; // must already be a real member of S.tasks, or splice(-1) below would corrupt the array
-  var day = t.forDay || todayKey();
+  var day = dayBucket(t.forDay || todayKey());
   t.group = newGroup;
   S.tasks.splice(idx, 1);
 
-  var peers = S.tasks.filter(function(x){ return (x.forDay || todayKey()) === day && x.group === newGroup; });
+  var peers = S.tasks.filter(function(x){ return dayBucket(x.forDay || todayKey()) === day && x.group === newGroup; });
   if(peers.length){
     S.tasks.splice(S.tasks.indexOf(peers[peers.length - 1]) + 1, 0, t);
     return;
   }
   if(newGroup !== ""){
-    var ungrouped = S.tasks.filter(function(x){ return (x.forDay || todayKey()) === day && x.group === ""; });
+    var ungrouped = S.tasks.filter(function(x){ return dayBucket(x.forDay || todayKey()) === day && x.group === ""; });
     if(ungrouped.length){ S.tasks.splice(S.tasks.indexOf(ungrouped[0]), 0, t); return; }
   }
   S.tasks.push(t);
@@ -539,6 +539,27 @@ function pastDayEnd(){ return Date.now() >= dayEndMs(); }
 function planningMode(){ return pastDayEnd() && !running() && !forceToday; }
 function planDay(){ return planningMode() ? tomorrowKey() : todayKey(); }
 
+// Tonight's "tomorrow" is not just tasks already stamped for tomorrow -- it's
+// also everything today leaves unfinished (parked included), since that will
+// land on tomorrow's list the moment the real roll happens. Today's own
+// finished tasks don't carry over, so they're excluded either way.
+function planTasks(){
+  if(!planningMode()) return todosFor(todayKey());
+  return S.tasks.filter(function(t){
+    if(t.status === "done") return false;
+    var d = t.forDay || todayKey();
+    return d === todayKey() || d === tomorrowKey();
+  });
+}
+
+// The bucket a task's forDay belongs to for grouping/reordering. During
+// planning mode, today's carry-overs and tomorrow's fresh tasks are shown as
+// one list, so they have to match as one bucket too.
+function dayBucket(forDay){
+  if(planningMode() && (forDay === todayKey() || forDay === tomorrowKey())) return tomorrowKey();
+  return forDay;
+}
+
 // The window being planned against: the rest of today, or tomorrow's full day.
 function windowMins(){
   if(!planningMode()) return minsLeftToday();
@@ -549,13 +570,13 @@ function windowMins(){
 }
 
 function cost(t){ return t.est * S.settings.multiplier + S.settings.buffer; }
-function plannedMins(){ var n = 0; todosFor(planDay()).forEach(function(t){ n += cost(t); }); return n; }
-function rawMins(){ var n = 0; todosFor(planDay()).forEach(function(t){ n += t.est; }); return n; }
+function plannedMins(){ var n = 0; planTasks().forEach(function(t){ n += cost(t); }); return n; }
+function rawMins(){ var n = 0; planTasks().forEach(function(t){ n += t.est; }); return n; }
 
 // Which items are the overflow, musts protected first.
 function overflow(){
   var left = windowMins(), acc = 0, out = [];
-  todosFor(planDay()).slice().sort(function(a,b){ return (b.must?1:0) - (a.must?1:0); }).forEach(function(t){
+  planTasks().slice().sort(function(a,b){ return (b.must?1:0) - (a.must?1:0); }).forEach(function(t){
     acc += cost(t);
     if(acc > left) out.push(t);
   });
@@ -724,8 +745,8 @@ function addTask(title, est){
 // past its neighboring cluster -- one pair of buttons, two things they can move.
 function move(id, dir){
   var t = byId(id); if(!t) return;
-  var day = t.forDay || todayKey();
-  var peers = S.tasks.filter(function(x){ return (x.forDay || todayKey()) === day && x.group === t.group; });
+  var day = dayBucket(t.forDay || todayKey());
+  var peers = S.tasks.filter(function(x){ return dayBucket(x.forDay || todayKey()) === day && x.group === t.group; });
   var i = peers.indexOf(t), j = i + dir;
   if(i >= 0 && j >= 0 && j < peers.length){
     var gi = S.tasks.indexOf(t), gj = S.tasks.indexOf(peers[j]);
@@ -745,7 +766,7 @@ function moveCluster(group, day, dir){
 
   var rebuilt = orderedDay(day, swapped), ri = 0;
   S.tasks = S.tasks.map(function(t){
-    return (t.forDay || todayKey()) === day ? rebuilt[ri++] : t;
+    return dayBucket(t.forDay || todayKey()) === day ? rebuilt[ri++] : t;
   });
   save(); render();
 }
@@ -764,7 +785,7 @@ function removeTask(id){
 // already has decided rather than offering a start button.
 function renderPlanningClose(){
   var box = document.getElementById("now-body");
-  var list = todosFor(tomorrowKey());
+  var list = planTasks();
   var planned = 0; list.forEach(function(t){ planned += cost(t); });
   var missing = list.filter(function(t){ return !t.first; });
 
@@ -927,7 +948,7 @@ function renderPlan(){
     : '';
 
   var list = document.getElementById("tasklist");
-  var dayTasks = S.tasks.filter(function(t){ return (t.forDay || todayKey()) === day; });
+  var dayTasks = planning ? planTasks() : S.tasks.filter(function(t){ return (t.forDay || todayKey()) === day; });
   var over = overflow().map(function(t){ return t.id; });
   var groupsInUse = distinctGroups(dayTasks);
 
@@ -981,16 +1002,16 @@ function renderPlan(){
   var planned = plannedMins(), left = windowMins(), of = overflow();
   var cap = document.getElementById("capacity");
   cap.className = "capacity" + (of.length ? " over" : "");
-  if(!todosFor(day).length){
+  if(!planTasks().length){
     cap.innerHTML = '<p>' + hm(left) + (planning ? " of tomorrow's day, nothing claimed." : " of working day left, nothing claimed.") + '</p>';
   } else {
     var groupTotals = {}, groupOrder = [];
-    todosFor(day).forEach(function(t){
+    planTasks().forEach(function(t){
       if(!t.group) return;
       if(groupOrder.indexOf(t.group) < 0){ groupOrder.push(t.group); groupTotals[t.group] = 0; }
       groupTotals[t.group] += cost(t);
     });
-    cap.innerHTML = '<p>' + todosFor(day).length + ' things, ' + hm(planned) + ' of real time. You have ' + hm(left) + '.</p>'
+    cap.innerHTML = '<p>' + planTasks().length + ' things, ' + hm(planned) + ' of real time. You have ' + hm(left) + '.</p>'
       + '<p>Raw guesses total ' + hm(rawMins()) + ', stretched ' + S.settings.multiplier
       + '&times; plus ' + S.settings.buffer + 'm switching cost each.</p>'
       + (groupOrder.length > 1
@@ -1109,7 +1130,7 @@ function renderGauge(){
   var lbl = document.getElementById("g-label");
   if(lbl) lbl.textContent = planningMode() ? "for tomorrow" : "left today";
   var r = document.getElementById("g-right"), f = document.getElementById("g-fill");
-  if(!todosFor(planDay()).length){
+  if(!planTasks().length){
     r.className = "gauge-right"; r.textContent = "nothing claimed";
     f.className = "bar-fill"; f.style.width = "0%"; return;
   }

@@ -2,7 +2,7 @@
    Job: make the app open offline and start instantly. Nothing else.
    Bump CACHE on every deploy or browsers will keep serving the old shell. */
 
-var CACHE = "hourglass-v4";
+var CACHE = "hourglass-v5";
 
 var SHELL = [
   "./",
